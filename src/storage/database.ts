@@ -1,5 +1,7 @@
 import type {
+  AutoPreviewLoops,
   ChildSessionRecord,
+  FilmOrientation,
   FrameRecord,
   ProjectRecord,
   SessionEvent,
@@ -74,7 +76,42 @@ export function openDatabase() {
   return databasePromise;
 }
 
-export async function createProject(name: string): Promise<ProjectRecord> {
+const AUTO_PREVIEW_LOOPS = new Set([0, 1, 2, 3, 4]);
+const COUNTDOWNS = new Set([0, 1, 2, 3, 5]);
+
+export function normalizeProjectRecord(project: ProjectRecord): ProjectRecord {
+  const orientation: FilmOrientation =
+    project.orientation === "portrait" || project.orientation === "landscape"
+      ? project.orientation
+      : project.height > project.width
+        ? "portrait"
+        : "landscape";
+  return {
+    ...project,
+    countdownSeconds: COUNTDOWNS.has(project.countdownSeconds)
+      ? project.countdownSeconds
+      : 2,
+    autoPreviewFrames: 6,
+    autoPreviewLoops: AUTO_PREVIEW_LOOPS.has(project.autoPreviewLoops)
+      ? (project.autoPreviewLoops as AutoPreviewLoops)
+      : 2,
+    width: orientation === "portrait" ? 1080 : 1920,
+    height: orientation === "portrait" ? 1920 : 1080,
+    gridEnabled: Boolean(project.gridEnabled),
+    cameraFacing:
+      project.cameraFacing === "environment" ? "environment" : "user",
+    cameraDeviceId:
+      typeof project.cameraDeviceId === "string"
+        ? project.cameraDeviceId
+        : null,
+    orientation,
+  };
+}
+
+export async function createProject(
+  name: string,
+  orientation: FilmOrientation = "landscape",
+): Promise<ProjectRecord> {
   const now = Date.now();
   const project: ProjectRecord = {
     id: createId("project"),
@@ -82,15 +119,17 @@ export async function createProject(name: string): Promise<ProjectRecord> {
     createdAt: now,
     updatedAt: now,
     fps: 8,
-    countdownSeconds: 3,
+    countdownSeconds: 2,
     onionOpacity: 0.4,
-    autoPreviewFrames: 8,
+    autoPreviewFrames: 6,
     autoPreviewLoops: 2,
-    width: 1280,
-    height: 720,
+    width: orientation === "portrait" ? 1080 : 1920,
+    height: orientation === "portrait" ? 1920 : 1080,
     frameCount: 0,
     gridEnabled: false,
-    cameraFacing: "environment",
+    cameraFacing: "user",
+    cameraDeviceId: null,
+    orientation,
   };
   const database = await openDatabase();
   const transaction = database.transaction(PROJECTS, "readwrite");
@@ -106,7 +145,9 @@ export async function listProjects(): Promise<ProjectRecord[]> {
     transaction.objectStore(PROJECTS).getAll() as IDBRequest<ProjectRecord[]>,
   );
   await transactionFinished(transaction);
-  return projects.sort((a, b) => b.updatedAt - a.updatedAt);
+  return projects
+    .map(normalizeProjectRecord)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function getProject(
@@ -120,13 +161,15 @@ export async function getProject(
     >,
   );
   await transactionFinished(transaction);
-  return project;
+  return project ? normalizeProjectRecord(project) : undefined;
 }
 
 export async function saveProject(project: ProjectRecord) {
   const database = await openDatabase();
   const transaction = database.transaction(PROJECTS, "readwrite");
-  transaction.objectStore(PROJECTS).put({ ...project, updatedAt: Date.now() });
+  transaction
+    .objectStore(PROJECTS)
+    .put({ ...normalizeProjectRecord(project), updatedAt: Date.now() });
   await transactionFinished(transaction);
 }
 
@@ -153,7 +196,47 @@ export async function listFrames(projectId: string): Promise<FrameRecord[]> {
   const transaction = database.transaction(FRAMES, "readonly");
   const frames = await getFramesInTransaction(transaction, projectId);
   await transactionFinished(transaction);
-  return frames.sort((a, b) => a.position - b.position);
+  return frames
+    .sort((a, b) => a.position - b.position)
+    .map(normalizeFrameRecord);
+}
+
+export async function getProjectPreviewFrame(
+  projectId: string,
+): Promise<FrameRecord | undefined> {
+  const database = await openDatabase();
+  const transaction = database.transaction(FRAMES, "readonly");
+  const index = transaction.objectStore(FRAMES).index("by-project-position");
+  const range = IDBKeyRange.bound(
+    [projectId, 0],
+    [projectId, Number.MAX_SAFE_INTEGER],
+  );
+  const cursor = await requestResult(index.openCursor(range, "prev"));
+  await transactionFinished(transaction);
+  return cursor ? normalizeFrameRecord(cursor.value as FrameRecord) : undefined;
+}
+
+export function normalizeFrameRecord(frame: FrameRecord): FrameRecord {
+  const imageIsValid = frame.image instanceof Blob && frame.image.size > 0;
+  if (!imageIsValid) return frame;
+  const thumbnailIsValid =
+    frame.thumbnail instanceof Blob && frame.thumbnail.size > 0;
+  return {
+    ...frame,
+    thumbnail: thumbnailIsValid ? frame.thumbnail : frame.image,
+    thumbnailNeedsRepair: !thumbnailIsValid,
+  };
+}
+
+export async function updateFrameThumbnail(frameId: string, thumbnail: Blob) {
+  const database = await openDatabase();
+  const transaction = database.transaction(FRAMES, "readwrite");
+  const store = transaction.objectStore(FRAMES);
+  const frame = await requestResult(
+    store.get(frameId) as IDBRequest<FrameRecord | undefined>,
+  );
+  if (frame) store.put({ ...frame, thumbnail });
+  await transactionFinished(transaction);
 }
 
 export async function addFrame(
@@ -329,7 +412,7 @@ export async function acknowledgeSessionEvents() {
   await transactionFinished(transaction);
 }
 
-export async function addDurationToLatestHiddenEvent(
+export async function addDurationToLatestExitEvent(
   sessionId: string,
   hiddenDurationMs: number,
 ) {
@@ -343,7 +426,7 @@ export async function addDurationToLatestHiddenEvent(
     .filter(
       (candidate) =>
         candidate.sessionId === sessionId &&
-        candidate.type === "app-hidden" &&
+        (candidate.type === "app-hidden" || candidate.type === "focus-lost") &&
         candidate.hiddenDurationMs === undefined,
     )
     .sort((a, b) => b.occurredAt - a.occurredAt)[0];

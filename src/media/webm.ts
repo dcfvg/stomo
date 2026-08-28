@@ -97,6 +97,8 @@ export async function framesToWebm(
   width: number,
   height: number,
   onProgress?: (current: number, total: number) => void,
+  prepareImage: (frame: FrameRecord) => Promise<Blob> = async (frame) =>
+    frame.image,
 ) {
   if (!frames.length)
     throw new Error("Prends au moins une photo avant d’enregistrer une vidéo.");
@@ -119,9 +121,8 @@ export async function framesToWebm(
       clusterTime = time;
       clusterBlocks = [];
     }
-    const vp8 = extractVp8(
-      new Uint8Array(await frames[index].image.arrayBuffer()),
-    );
+    const preparedImage = await prepareImage(frames[index]);
+    const vp8 = extractVp8(new Uint8Array(await preparedImage.arrayBuffer()));
     clusterBlocks.push(simpleBlock(time - clusterTime, vp8));
     onProgress?.(index + 1, frames.length);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));

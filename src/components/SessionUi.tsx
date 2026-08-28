@@ -1,6 +1,7 @@
 import {
   RiAlertFill,
   RiDeleteBinLine,
+  RiFullscreenLine,
   RiHistoryLine,
   RiLockLine,
   RiShieldCheckLine,
@@ -14,9 +15,11 @@ type ProtectedAction = "acknowledge" | "end" | "clear";
 
 interface SessionUiProps {
   session: { active: boolean; unacknowledgedEvents: number };
+  fullscreenActive: boolean;
   events: SessionEvent[];
   latestAlert?: SessionEvent;
   onStart: (pin: string) => Promise<void>;
+  onEnterFullscreen: () => Promise<void>;
   onAcknowledge: (pin: string) => Promise<void>;
   onEnd: (pin: string) => Promise<void>;
   onClear: (pin: string) => Promise<void>;
@@ -44,6 +47,10 @@ function eventLabel(event: SessionEvent) {
       return "Stomo n’était plus visible";
     case "app-visible":
       return `Retour dans Stomo après ${formatDuration(event.hiddenDurationMs)}`;
+    case "focus-lost":
+      return "Stomo a perdu le focus";
+    case "fullscreen-exited":
+      return "Sortie du plein écran";
     case "unexpected-restart":
       return "Interruption inattendue";
     case "session-ended":
@@ -51,11 +58,26 @@ function eventLabel(event: SessionEvent) {
   }
 }
 
+function alertLabel(event: SessionEvent) {
+  switch (event.type) {
+    case "focus-lost":
+      return "Stomo a perdu le focus.";
+    case "fullscreen-exited":
+      return "Stomo a quitté le plein écran.";
+    case "unexpected-restart":
+      return "Interruption inattendue.";
+    default:
+      return "Stomo n’était plus visible.";
+  }
+}
+
 export function SessionUi({
   session,
+  fullscreenActive,
   events,
   latestAlert,
   onStart,
+  onEnterFullscreen,
   onAcknowledge,
   onEnd,
   onClear,
@@ -133,6 +155,15 @@ export function SessionUi({
                 <span>{session.unacknowledgedEvents}</span>
               )}
             </button>
+            {!fullscreenActive && document.fullscreenEnabled && (
+              <button
+                className="compact-action compact-action--fullscreen"
+                type="button"
+                onClick={() => void onEnterFullscreen()}
+              >
+                <RiFullscreenLine aria-hidden="true" /> Plein écran
+              </button>
+            )}
             <button
               className="compact-action"
               type="button"
@@ -156,11 +187,7 @@ export function SessionUi({
         <aside className="exit-alert" role="alert">
           <RiAlertFill aria-hidden="true" />
           <p>
-            <strong>
-              {latestAlert.type === "unexpected-restart"
-                ? "Interruption inattendue."
-                : "Stomo n’était plus visible."}
-            </strong>
+            <strong>{alertLabel(latestAlert)}</strong>
             <span>
               À{" "}
               {new Intl.DateTimeFormat("fr-FR", {

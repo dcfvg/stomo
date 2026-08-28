@@ -1,6 +1,7 @@
 /node_modules
 /coverage
 /dist
+.cert/
 .DS_Store
 npm-debug.log*
 .env*

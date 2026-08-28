@@ -9,8 +9,10 @@ import {
   listProjects,
   moveFrame,
   saveProject,
+  updateFrameThumbnail,
 } from "../storage/database";
-import type { FrameRecord, ProjectRecord } from "../types";
+import { createThumbnail, loadBlobImage } from "../media/images";
+import type { FilmOrientation, FrameRecord, ProjectRecord } from "../types";
 
 interface CapturedFrame {
   image: Blob;
@@ -27,7 +29,7 @@ interface StomoState {
   loading: boolean;
   notice: string | null;
   initialize: () => Promise<void>;
-  createFilm: (name: string) => Promise<void>;
+  createFilm: (name: string, orientation: FilmOrientation) => Promise<void>;
   openFilm: (id: string) => Promise<void>;
   closeFilm: () => Promise<void>;
   addCapturedFrame: (captured: CapturedFrame) => Promise<FrameRecord>;
@@ -49,6 +51,44 @@ async function reloadFilm(projectId: string) {
   return { project, frames };
 }
 
+async function repairThumbnails(
+  project: ProjectRecord,
+  frames: FrameRecord[],
+  update: (recipe: (state: StomoState) => Partial<StomoState>) => void,
+) {
+  for (const frame of frames) {
+    try {
+      if (!frame.thumbnailNeedsRepair) await loadBlobImage(frame.thumbnail);
+      else throw new Error("Vignette manquante");
+    } catch {
+      try {
+        const thumbnail = await createThumbnail(
+          frame.image,
+          project.orientation,
+        );
+        await updateFrameThumbnail(frame.id, thumbnail);
+        update((state) =>
+          state.project?.id === project.id
+            ? {
+                frames: state.frames.map((candidate) =>
+                  candidate.id === frame.id
+                    ? {
+                        ...candidate,
+                        thumbnail,
+                        thumbnailNeedsRepair: false,
+                      }
+                    : candidate,
+                ),
+              }
+            : {},
+        );
+      } catch {
+        // L’image originale reste utilisée comme vignette de secours.
+      }
+    }
+  }
+}
+
 export const useStomoStore = create<StomoState>((set, get) => ({
   projects: [],
   project: null,
@@ -61,8 +101,8 @@ export const useStomoStore = create<StomoState>((set, get) => ({
     const projects = await listProjects();
     set({ projects, loading: false });
   },
-  createFilm: async (name) => {
-    const project = await createProject(name);
+  createFilm: async (name, orientation) => {
+    const project = await createProject(name, orientation);
     set({
       project,
       frames: [],
@@ -79,6 +119,8 @@ export const useStomoStore = create<StomoState>((set, get) => ({
       selectedFrameId: frames.at(-1)?.id ?? null,
       loading: false,
     });
+    await saveProject(project);
+    void repairThumbnails(project, frames, set);
   },
   closeFilm: async () => {
     const projects = await listProjects();
@@ -142,6 +184,13 @@ export const useStomoStore = create<StomoState>((set, get) => ({
       ...current,
       ...patch,
       id: current.id,
+      ...(current.frameCount > 0
+        ? {
+            orientation: current.orientation,
+            width: current.width,
+            height: current.height,
+          }
+        : {}),
       updatedAt: Date.now(),
     };
     await saveProject(project);

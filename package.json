@@ -9,6 +9,8 @@
   },
   "scripts": {
     "dev": "vite",
+    "cert:dev": "node scripts/create-dev-certificate.mjs",
+    "dev:https": "STOMO_HTTPS=1 vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",

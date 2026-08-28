@@ -29,6 +29,29 @@ npm install
 npm run dev
 ```
 
+### Caméra sur un téléphone pendant le développement
+
+Chrome autorise la caméra et le code adulte seulement dans une page sécurisée
+(`HTTPS`) ou sur `localhost`. Un simple `http://192.168…` affiche donc une
+explication dans Stomo au lieu de demander la caméra.
+
+Pour travailler en HTTPS sur le Wi-Fi :
+
+1. installer `mkcert` sur le Mac (`brew install mkcert`) ;
+2. lancer `npm run cert:dev`, qui inclut les adresses IP locales dans le
+   certificat ;
+3. copier l’autorité racine indiquée par `mkcert -CAROOT` sur le Galaxy A5 ;
+4. dans Android 7, ouvrir **Réglages → Écran verrouillage/Sécurité → Autres
+   paramètres de sécurité → Installer depuis stockage**, puis installer cette
+   autorité temporaire ;
+5. lancer `npm run dev:https` et ouvrir l’adresse `https://192.168…:4174`
+   affichée par Vite.
+
+Retirer cette autorité du téléphone après les essais. Sans certificat, une
+alternative simple est la liaison USB : activer le débogage USB, lancer
+`adb reverse tcp:4174 tcp:4174`, puis ouvrir `http://localhost:4174` sur le
+téléphone pendant que `npm run dev` tourne sur le Mac.
+
 Les commandes de contrôle sont :
 
 ```bash
@@ -53,6 +76,7 @@ Le workflow `.github/workflows/pages.yml` vérifie le code, exécute les tests, 
 - JPEG : une photo choisie ;
 - ZIP : toutes les photos JPEG numérotées et `informations.txt` ;
 - WebM VP8 : film muet ;
-- `.stomo` : archive versionnée contenant les images WebP originales et les réglages.
+- `.stomo` v2 : archive versionnée contenant les images WebP originales, leurs
+  vignettes et les réglages. Les sauvegardes v1 restent importables.
 
 Les détails sur les projets ayant inspiré Stomo sont dans [ATTRIBUTIONS.md](./ATTRIBUTIONS.md).

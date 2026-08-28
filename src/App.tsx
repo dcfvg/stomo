@@ -2,6 +2,7 @@ import "@fontsource-variable/lexend";
 import { RiSparklingFill } from "@remixicon/react";
 import { useEffect } from "react";
 import { Home } from "./components/Home";
+import { InstallPrompt } from "./components/InstallPrompt";
 import { SessionUi } from "./components/SessionUi";
 import { Studio } from "./components/Studio";
 import { useChildSession } from "./session/useChildSession";
@@ -15,6 +16,22 @@ export default function App() {
     void initialize();
   }, [initialize]);
 
+  useEffect(() => {
+    const updateAppHeight = () => {
+      const height = window.visualViewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty("--app-height", `${height}px`);
+    };
+    updateAppHeight();
+    window.addEventListener("resize", updateAppHeight);
+    window.addEventListener("orientationchange", updateAppHeight);
+    window.visualViewport?.addEventListener("resize", updateAppHeight);
+    return () => {
+      window.removeEventListener("resize", updateAppHeight);
+      window.removeEventListener("orientationchange", updateAppHeight);
+      window.visualViewport?.removeEventListener("resize", updateAppHeight);
+    };
+  }, []);
+
   if (loading && !project) {
     return (
       <main className="splash">
@@ -27,9 +44,11 @@ export default function App() {
   const sessionUi = (
     <SessionUi
       session={childSession.session}
+      fullscreenActive={childSession.fullscreenActive}
       events={childSession.events}
       latestAlert={childSession.latestAlert}
       onStart={childSession.start}
+      onEnterFullscreen={childSession.enterFullscreen}
       onAcknowledge={childSession.acknowledge}
       onEnd={childSession.end}
       onClear={childSession.clearLog}
@@ -52,7 +71,18 @@ export default function App() {
           {sessionUi}
         </header>
       )}
-      {project ? <Studio /> : <Home />}
+      {project ? (
+        <Studio />
+      ) : (
+        <>
+          <InstallPrompt />
+          <Home
+            sessionActive={childSession.session.active}
+            sessionId={childSession.session.sessionId}
+            sessionEvents={childSession.events}
+          />
+        </>
+      )}
       {project && <div className="studio-session-layer">{sessionUi}</div>}
     </>
   );

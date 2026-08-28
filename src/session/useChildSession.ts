@@ -3,7 +3,7 @@ import { createId } from "../lib/ids";
 import { createPinHash, verifyPin } from "../security/pin";
 import {
   acknowledgeSessionEvents,
-  addDurationToLatestHiddenEvent,
+  addDurationToLatestExitEvent,
   addSessionEvent,
   clearSessionEvents,
   emptyChildSession,
@@ -15,7 +15,8 @@ import type { ChildSessionRecord, SessionEvent } from "../types";
 
 const MARKER_KEY = "stomo-child-session-marker";
 const HEARTBEAT_INTERVAL = 5_000;
-const STALE_HEARTBEAT = 18_000;
+const FOCUS_LOSS_DELAY = 450;
+const FULLSCREEN_BLUR_GRACE = 900;
 
 interface SessionMarker {
   sessionId: string;
@@ -65,8 +66,14 @@ export function useChildSession() {
     useState<ChildSessionRecord>(emptyChildSession());
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [ready, setReady] = useState(false);
+  const [fullscreenActive, setFullscreenActive] = useState(
+    Boolean(document.fullscreenElement),
+  );
   const sessionRef = useRef(session);
-  const transitionRunning = useRef(false);
+  const eventQueue = useRef<Promise<void>>(Promise.resolve());
+  const focusLossTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fullscreenWasActive = useRef(Boolean(document.fullscreenElement));
+  const ignoreBlurUntil = useRef(0);
 
   useEffect(() => {
     sessionRef.current = session;
@@ -77,6 +84,18 @@ export function useChildSession() {
     [],
   );
 
+  const enqueue = useCallback(
+    (operation: () => Promise<void>) => {
+      eventQueue.current = eventQueue.current
+        .then(operation)
+        .then(refreshEvents)
+        .catch(() => {
+          // Le marqueur localStorage reste la copie immédiate de secours.
+        });
+    },
+    [refreshEvents],
+  );
+
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -85,9 +104,7 @@ export function useChildSession() {
       if (
         stored.active &&
         stored.sessionId &&
-        marker?.sessionId === stored.sessionId &&
-        (marker.hiddenAt !== null ||
-          Date.now() - marker.heartbeatAt > STALE_HEARTBEAT)
+        marker?.sessionId === stored.sessionId
       ) {
         const occurredAt = marker.hiddenAt ?? marker.heartbeatAt;
         await addSessionEvent({
@@ -131,16 +148,17 @@ export function useChildSession() {
 
   useEffect(() => {
     if (!ready) return;
-    const becomeHidden = () => {
+    const cancelFocusLoss = () => {
+      if (focusLossTimer.current !== null) {
+        clearTimeout(focusLossTimer.current);
+        focusLossTimer.current = null;
+      }
+    };
+    const becomeHidden = (type: "app-hidden" | "focus-lost") => {
       const current = sessionRef.current;
-      if (
-        !current.active ||
-        !current.sessionId ||
-        current.pendingHiddenAt ||
-        transitionRunning.current
-      )
+      if (!current.active || !current.sessionId || current.pendingHiddenAt)
         return;
-      transitionRunning.current = true;
+      const sessionId = current.sessionId;
       const hiddenAt = Date.now();
       const updated = {
         ...current,
@@ -152,28 +170,20 @@ export function useChildSession() {
       setSession(updated);
       writeMarker(updated, hiddenAt);
       window.dispatchEvent(new Event("stomo-background"));
-      void Promise.all([
-        saveChildSession(updated),
-        addSessionEvent({
-          sessionId: current.sessionId,
-          type: "app-hidden",
+      enqueue(async () => {
+        await saveChildSession(updated);
+        await addSessionEvent({
+          sessionId,
+          type,
           occurredAt: hiddenAt,
-        }),
-      ]).finally(() => {
-        transitionRunning.current = false;
-        void refreshEvents();
+        });
       });
     };
     const becomeVisible = () => {
       const current = sessionRef.current;
-      if (
-        !current.active ||
-        !current.sessionId ||
-        !current.pendingHiddenAt ||
-        transitionRunning.current
-      )
+      if (!current.active || !current.sessionId || !current.pendingHiddenAt)
         return;
-      transitionRunning.current = true;
+      const sessionId = current.sessionId;
       const visibleAt = Date.now();
       const hiddenAt = current.pendingHiddenAt;
       const updated = {
@@ -185,36 +195,100 @@ export function useChildSession() {
       setSession(updated);
       writeMarker(updated, null);
       window.dispatchEvent(new Event("stomo-foreground"));
-      void Promise.all([
-        saveChildSession(updated),
-        addDurationToLatestHiddenEvent(current.sessionId, visibleAt - hiddenAt),
-        addSessionEvent({
-          sessionId: current.sessionId,
+      enqueue(async () => {
+        await saveChildSession(updated);
+        await addDurationToLatestExitEvent(sessionId, visibleAt - hiddenAt);
+        await addSessionEvent({
+          sessionId,
           type: "app-visible",
           occurredAt: visibleAt,
           hiddenDurationMs: visibleAt - hiddenAt,
-        }),
-      ]).finally(() => {
-        transitionRunning.current = false;
-        void refreshEvents();
+        });
       });
     };
-    const onVisibility = () =>
-      document.visibilityState === "hidden" ? becomeHidden() : becomeVisible();
-    const onPageShow = () => becomeVisible();
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("pagehide", becomeHidden);
-    window.addEventListener("pageshow", onPageShow);
-    document.addEventListener("freeze", becomeHidden);
-    document.addEventListener("resume", becomeVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pagehide", becomeHidden);
-      window.removeEventListener("pageshow", onPageShow);
-      document.removeEventListener("freeze", becomeHidden);
-      document.removeEventListener("resume", becomeVisible);
+    const recordFullscreenExit = () => {
+      const current = sessionRef.current;
+      if (!current.active || !current.sessionId) return;
+      const sessionId = current.sessionId;
+      const occurredAt = Date.now();
+      const updated = {
+        ...current,
+        lastHeartbeatAt: occurredAt,
+        unacknowledgedEvents: current.unacknowledgedEvents + 1,
+      };
+      sessionRef.current = updated;
+      setSession(updated);
+      writeMarker(updated, updated.pendingHiddenAt);
+      enqueue(async () => {
+        await saveChildSession(updated);
+        await addSessionEvent({
+          sessionId,
+          type: "fullscreen-exited",
+          occurredAt,
+        });
+      });
     };
-  }, [ready, refreshEvents]);
+    const onVisibility = () => {
+      cancelFocusLoss();
+      if (document.visibilityState === "hidden") becomeHidden("app-hidden");
+      else becomeVisible();
+    };
+    const onPageHide = () => {
+      cancelFocusLoss();
+      becomeHidden("app-hidden");
+    };
+    const onFreeze = () => {
+      cancelFocusLoss();
+      becomeHidden("app-hidden");
+    };
+    const onPageShow = () => becomeVisible();
+    const onBlur = () => {
+      cancelFocusLoss();
+      if (
+        !sessionRef.current.active ||
+        document.visibilityState === "hidden" ||
+        Date.now() < ignoreBlurUntil.current
+      )
+        return;
+      focusLossTimer.current = setTimeout(() => {
+        focusLossTimer.current = null;
+        if (document.visibilityState !== "hidden") becomeHidden("focus-lost");
+      }, FOCUS_LOSS_DELAY);
+    };
+    const onFocus = () => {
+      cancelFocusLoss();
+      becomeVisible();
+    };
+    const onFullscreenChange = () => {
+      const isActive = Boolean(document.fullscreenElement);
+      const didExit = fullscreenWasActive.current && !isActive;
+      fullscreenWasActive.current = isActive;
+      setFullscreenActive(isActive);
+      if (!didExit) return;
+      cancelFocusLoss();
+      ignoreBlurUntil.current = Date.now() + FULLSCREEN_BLUR_GRACE;
+      recordFullscreenExit();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
+    document.addEventListener("freeze", onFreeze);
+    document.addEventListener("resume", becomeVisible);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => {
+      cancelFocusLoss();
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
+      document.removeEventListener("freeze", onFreeze);
+      document.removeEventListener("resume", becomeVisible);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+    };
+  }, [enqueue, ready]);
 
   const start = useCallback(
     async (pin: string) => {
@@ -247,9 +321,15 @@ export function useChildSession() {
       setSession(next);
       await refreshEvents();
       await fullscreen;
+      setFullscreenActive(Boolean(document.fullscreenElement));
     },
     [refreshEvents],
   );
+
+  const enterFullscreen = useCallback(async () => {
+    await document.documentElement.requestFullscreen?.().catch(() => undefined);
+    setFullscreenActive(Boolean(document.fullscreenElement));
+  }, []);
 
   const checkPin = useCallback(async (pin: string) => {
     const current = sessionRef.current;
@@ -320,15 +400,20 @@ export function useChildSession() {
   const latestAlert = events.find(
     (event) =>
       !event.acknowledgedAt &&
-      (event.type === "app-hidden" || event.type === "unexpected-restart"),
+      (event.type === "app-hidden" ||
+        event.type === "focus-lost" ||
+        event.type === "fullscreen-exited" ||
+        event.type === "unexpected-restart"),
   );
 
   return {
     session,
     events,
     ready,
+    fullscreenActive,
     latestAlert,
     start,
+    enterFullscreen,
     acknowledge,
     end,
     clearLog,

@@ -11,15 +11,28 @@ function base64ToBytes(value: string) {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
+function secureCrypto() {
+  if (
+    (typeof window !== "undefined" && window.isSecureContext === false) ||
+    !globalThis.crypto?.subtle
+  ) {
+    throw new Error(
+      "Le code adulte a besoin d’une adresse HTTPS ou de localhost. Ouvre la version sécurisée de Stomo.",
+    );
+  }
+  return globalThis.crypto;
+}
+
 async function derivePin(pin: string, salt: Uint8Array) {
-  const key = await crypto.subtle.importKey(
+  const cryptoApi = secureCrypto();
+  const key = await cryptoApi.subtle.importKey(
     "raw",
     new TextEncoder().encode(pin),
     "PBKDF2",
     false,
     ["deriveBits"],
   );
-  const bits = await crypto.subtle.deriveBits(
+  const bits = await cryptoApi.subtle.deriveBits(
     {
       name: "PBKDF2",
       hash: "SHA-256",
@@ -33,7 +46,7 @@ async function derivePin(pin: string, salt: Uint8Array) {
 }
 
 export async function createPinHash(pin: string) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const salt = secureCrypto().getRandomValues(new Uint8Array(16));
   const hash = await derivePin(pin, salt);
   return { pinSalt: bytesToBase64(salt), pinHash: bytesToBase64(hash) };
 }

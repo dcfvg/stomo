@@ -1,21 +1,44 @@
 import {
   RiCameraFill,
   RiDownloadCloud2Line,
-  RiFolderVideoLine,
+  RiLandscapeLine,
   RiPlayFill,
+  RiSmartphoneLine,
   RiSparklingFill,
   RiUploadCloud2Line,
 } from "@remixicon/react";
 import { useRef, useState } from "react";
 import { importProject } from "../media/downloads";
 import { useStomoStore } from "../state/useStomoStore";
-import type { ExportProgress } from "../types";
+import type { ExportProgress, FilmOrientation, SessionEvent } from "../types";
 import { Dialog } from "./Dialog";
+import { ProjectCover } from "./ProjectCover";
 
-export function Home() {
+interface HomeProps {
+  sessionActive: boolean;
+  sessionId: string | null;
+  sessionEvents: SessionEvent[];
+}
+
+function timeLabel(timestamp: number) {
+  return new Intl.DateTimeFormat("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
+function durationLabel(duration: number) {
+  const seconds = Math.max(1, Math.round(duration / 1_000));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} min ${seconds % 60} s`;
+}
+
+export function Home({ sessionActive, sessionId, sessionEvents }: HomeProps) {
   const { projects, createFilm, openFilm, refreshProjects } = useStomoStore();
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
+  const [orientation, setOrientation] = useState<FilmOrientation>("landscape");
   const [error, setError] = useState("");
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -23,9 +46,10 @@ export function Home() {
   const create = async () => {
     setError("");
     try {
-      await createFilm(name);
+      await createFilm(name, orientation);
       setShowCreate(false);
       setName("");
+      setOrientation("landscape");
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -34,6 +58,17 @@ export function Home() {
       );
     }
   };
+
+  const exitHistory = sessionEvents
+    .filter(
+      (event) =>
+        (event.type === "app-hidden" ||
+          event.type === "focus-lost" ||
+          event.type === "fullscreen-exited" ||
+          event.type === "unexpected-restart") &&
+        (!sessionActive || !sessionId || event.sessionId === sessionId),
+    )
+    .slice(0, 10);
 
   const openSavedProject = async (file?: File) => {
     if (!file) return;
@@ -82,14 +117,10 @@ export function Home() {
         </button>
         {projects.map((project, index) => (
           <article className="project-card" key={project.id}>
-            <div
-              className={`project-cover project-cover--${index % 2 ? "cyan" : "coral"}`}
-            >
-              <RiFolderVideoLine size={50} aria-hidden="true" />
-              <span>
-                {project.frameCount} photo{project.frameCount > 1 ? "s" : ""}
-              </span>
-            </div>
+            <ProjectCover
+              project={project}
+              color={index % 2 ? "cyan" : "coral"}
+            />
             <div className="project-card__body">
               <div>
                 <strong>{project.name}</strong>
@@ -155,6 +186,31 @@ export function Home() {
                 onKeyDown={(event) => event.key === "Enter" && void create()}
               />
             </label>
+            <fieldset className="orientation-picker">
+              <legend>Dans quel sens veux-tu filmer&nbsp;?</legend>
+              <button
+                className={orientation === "landscape" ? "is-selected" : ""}
+                type="button"
+                onClick={() => setOrientation("landscape")}
+              >
+                <RiLandscapeLine aria-hidden="true" />
+                <span>
+                  <strong>Paysage</strong>
+                  <small>Comme un écran de cinéma</small>
+                </span>
+              </button>
+              <button
+                className={orientation === "portrait" ? "is-selected" : ""}
+                type="button"
+                onClick={() => setOrientation("portrait")}
+              >
+                <RiSmartphoneLine aria-hidden="true" />
+                <span>
+                  <strong>Vertical</strong>
+                  <small>Comme un téléphone debout</small>
+                </span>
+              </button>
+            </fieldset>
             {error && <p className="form-error">{error}</p>}
             <button
               className="primary-button"
@@ -174,6 +230,59 @@ export function Home() {
           <progress value={progress.current} max={progress.total} />
           <span>Ne ferme pas Stomo.</span>
         </div>
+      )}
+
+      {sessionActive && (
+        <section
+          className="home-exit-history"
+          aria-labelledby="exit-history-title"
+        >
+          <h2 id="exit-history-title">Sorties de Stomo</h2>
+          {exitHistory.length ? (
+            <ol>
+              {exitHistory.map((event) => {
+                const duration = event.hiddenDurationMs;
+                const returnedAt = duration
+                  ? event.occurredAt + duration
+                  : undefined;
+                return (
+                  <li key={event.id}>
+                    {event.type === "unexpected-restart" ? (
+                      <>
+                        <strong>Interruption inattendue</strong>
+                        <span> à {timeLabel(event.occurredAt)}</span>
+                      </>
+                    ) : event.type === "fullscreen-exited" ? (
+                      <strong>
+                        Sortie du plein écran à {timeLabel(event.occurredAt)}
+                      </strong>
+                    ) : (
+                      <>
+                        <strong>
+                          {event.type === "focus-lost"
+                            ? "Perte de focus"
+                            : "Sortie"}{" "}
+                          à {timeLabel(event.occurredAt)}
+                        </strong>
+                        {returnedAt ? (
+                          <span>
+                            {" "}
+                            · retour à {timeLabel(returnedAt)} ·{" "}
+                            {durationLabel(duration ?? 0)}
+                          </span>
+                        ) : (
+                          <span> · sortie en cours</span>
+                        )}
+                      </>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p>Aucune sortie depuis le début de cette session.</p>
+          )}
+        </section>
       )}
     </main>
   );

@@ -4,6 +4,7 @@ import {
   RiArrowRightLine,
   RiCameraFill,
   RiCameraSwitchLine,
+  RiContrast2Line,
   RiDeleteBinLine,
   RiDownload2Line,
   RiFileCopyLine,
@@ -12,11 +13,16 @@ import {
   RiGalleryLine,
   RiGhostLine,
   RiGridLine,
+  RiHeadphoneLine,
   RiImageDownloadLine,
+  RiLandscapeLine,
   RiListCheck2,
   RiPauseFill,
   RiPlayFill,
+  RiCloseLine,
   RiSettings3Line,
+  RiSkipForwardFill,
+  RiSmartphoneLine,
   RiSpeedLine,
   RiTimerLine,
 } from "@remixicon/react";
@@ -27,16 +33,21 @@ import {
   exportSelectedPhoto,
   exportVideo,
 } from "../media/downloads";
-import { captureVideoFrame } from "../media/images";
+import { cameraSecurityMessage, requestCameraStream } from "../media/camera";
+import { captureVideoFrame, FULL_HD } from "../media/images";
+import { useHeadsetRemote } from "../media/useHeadsetRemote";
 import { useStomoStore } from "../state/useStomoStore";
 import type {
+  AutoPreviewLoops,
   CountdownSeconds,
   ExportProgress,
+  FilmOrientation,
   FrameRate,
   FrameRecord,
 } from "../types";
 import { BlobImage } from "./BlobImage";
 import { Dialog } from "./Dialog";
+import { SmoothPlayback, type SmoothPlaybackHandle } from "./SmoothPlayback";
 
 type StudioActivity =
   | "idle"
@@ -44,6 +55,8 @@ type StudioActivity =
   | "capturing"
   | "playing"
   | "exporting";
+type PlaybackKind = "film" | "aid" | "compare" | null;
+
 const wait = (duration: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, duration));
 
@@ -65,6 +78,10 @@ function beep() {
   }
 }
 
+function cameraLabel(device: MediaDeviceInfo, index: number) {
+  return device.label || `Caméra ${index + 1}`;
+}
+
 export function Studio() {
   const {
     project,
@@ -80,13 +97,25 @@ export function Studio() {
   } = useStomoStore();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const playbackSurfaceRef = useRef<SmoothPlaybackHandle>(null);
   const operationToken = useRef(0);
+  const lowerResolutionNotified = useRef(false);
+  const takePhotoRef = useRef<() => void>(() => undefined);
   const [cameraRestart, setCameraRestart] = useState(0);
   const [cameraError, setCameraError] = useState("");
   const [cameraReady, setCameraReady] = useState(false);
+  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [activity, setActivity] = useState<StudioActivity>("idle");
+  const [playbackKind, setPlaybackKind] = useState<PlaybackKind>(null);
+  const [previewPass, setPreviewPass] = useState(0);
+  const [compareLabel, setCompareLabel] = useState<"Avant" | "Après" | null>(
+    null,
+  );
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [playbackFrame, setPlaybackFrame] = useState<FrameRecord | null>(null);
+  const [playbackVisible, setPlaybackVisible] = useState(false);
+  const [inspectionFrame, setInspectionFrame] = useState<FrameRecord | null>(
+    null,
+  );
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showExports, setShowExports] = useState(false);
@@ -100,6 +129,7 @@ export function Studio() {
   const onionFrame = frames.at(-1);
   const projectId = project?.id;
   const cameraFacing = project?.cameraFacing;
+  const cameraDeviceId = project?.cameraDeviceId;
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -111,8 +141,18 @@ export function Studio() {
   const stopActivity = useCallback(() => {
     operationToken.current += 1;
     setCountdown(null);
-    setPlaybackFrame(null);
+    playbackSurfaceRef.current?.clear();
+    setPlaybackVisible(false);
+    setInspectionFrame(null);
+    setPlaybackKind(null);
+    setPreviewPass(0);
+    setCompareLabel(null);
     setActivity("idle");
+  }, []);
+
+  useEffect(() => {
+    document.body.classList.add("studio-open");
+    return () => document.body.classList.remove("studio-open");
   }, []);
 
   useEffect(() => {
@@ -121,34 +161,29 @@ export function Studio() {
     const startCamera = async () => {
       stopCamera();
       setCameraError("");
+      const securityMessage = cameraSecurityMessage();
+      if (securityMessage) {
+        setCameraError(securityMessage);
+        return;
+      }
       if (!navigator.mediaDevices?.getUserMedia) {
         setCameraError(
           "Cette version de Chrome ne donne pas accès à la caméra ici.",
         );
         return;
       }
-      const preferred: MediaStreamConstraints = {
-        audio: false,
-        video: {
-          facingMode: { ideal: cameraFacing },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          aspectRatio: { ideal: 16 / 9 },
-        },
-      };
       try {
-        let stream: MediaStream;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia(preferred);
-        } catch {
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-              facingMode: cameraFacing,
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-            },
-          });
+        const requested = await requestCameraStream(
+          navigator.mediaDevices,
+          cameraFacing,
+          cameraDeviceId ?? null,
+        );
+        const stream = requested.stream;
+        if (requested.selectedDeviceUnavailable) {
+          setMessage(
+            "Cette caméra n’est plus disponible. Stomo en choisit une autre.",
+          );
+          void updateProject({ cameraDeviceId: null });
         }
         if (disposed) {
           stream.getTracks().forEach((track) => track.stop());
@@ -159,6 +194,16 @@ export function Studio() {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
+        const devices = (
+          await navigator.mediaDevices.enumerateDevices()
+        ).filter((device) => device.kind === "videoinput");
+        if (disposed) return;
+        setCameraDevices(devices);
+        const activeDeviceId = stream
+          .getVideoTracks()[0]
+          ?.getSettings().deviceId;
+        if (activeDeviceId && !cameraDeviceId)
+          void updateProject({ cameraDeviceId: activeDeviceId });
         setCameraReady(true);
       } catch {
         setCameraError(
@@ -171,7 +216,21 @@ export function Studio() {
       disposed = true;
       stopCamera();
     };
-  }, [cameraFacing, cameraRestart, projectId, stopCamera]);
+  }, [
+    cameraDeviceId,
+    cameraFacing,
+    cameraRestart,
+    projectId,
+    stopCamera,
+    updateProject,
+  ]);
+
+  useEffect(() => {
+    const changed = () => setCameraRestart((value) => value + 1);
+    navigator.mediaDevices?.addEventListener?.("devicechange", changed);
+    return () =>
+      navigator.mediaDevices?.removeEventListener?.("devicechange", changed);
+  }, []);
 
   useEffect(() => {
     const background = () => {
@@ -191,37 +250,116 @@ export function Studio() {
     };
   }, [stopActivity, stopCamera]);
 
-  const play = useCallback(
-    async (
-      sequence: FrameRecord[],
-      loops: number,
-      token = ++operationToken.current,
-    ) => {
+  const playFilm = useCallback(
+    async (sequence: FrameRecord[]) => {
       if (!project || !sequence.length) return;
+      const token = ++operationToken.current;
+      const surface = playbackSurfaceRef.current;
+      if (!surface) return;
+      setInspectionFrame(null);
       setActivity("playing");
-      for (let loop = 0; loop < loops; loop += 1) {
-        for (const frame of sequence) {
+      setPlaybackKind("film");
+      try {
+        await surface.preload(sequence.slice(0, 3));
+        for (let index = 0; index < sequence.length; index += 1) {
           if (operationToken.current !== token) return;
-          setPlaybackFrame(frame);
+          await surface.show(sequence[index]);
+          if (operationToken.current !== token) return;
+          setPlaybackVisible(true);
+          void surface
+            .preload(sequence.slice(index + 1, index + 4))
+            .catch(() => undefined);
           await wait(1000 / project.fps);
         }
+      } catch {
+        if (operationToken.current === token) {
+          setMessage("Une photo du film ne peut pas être affichée.");
+          stopActivity();
+        }
+        return;
       }
-      if (operationToken.current === token) {
-        setPlaybackFrame(null);
-        setActivity("idle");
-      }
+      if (operationToken.current === token) stopActivity();
     },
-    [project],
+    [project, stopActivity],
   );
 
-  const takePhoto = async () => {
+  const playMotionAid = useCallback(
+    async (sequence: FrameRecord[], loops: AutoPreviewLoops, token: number) => {
+      if (!sequence.length || loops === 0) {
+        if (operationToken.current === token) setActivity("idle");
+        return;
+      }
+      const surface = playbackSurfaceRef.current;
+      if (!surface) return;
+      setActivity("playing");
+      setPlaybackKind("aid");
+      try {
+        await surface.preload(sequence);
+        for (let loop = 0; loop < loops; loop += 1) {
+          setPreviewPass(loop + 1);
+          for (let index = 0; index < sequence.length; index += 1) {
+            if (operationToken.current !== token) return;
+            await surface.show(sequence[index]);
+            if (operationToken.current !== token) return;
+            setPlaybackVisible(true);
+            await wait(index === sequence.length - 1 ? 650 : 250);
+          }
+        }
+      } catch {
+        if (operationToken.current === token) {
+          setMessage("Une photo de la relecture ne peut pas être affichée.");
+          stopActivity();
+        }
+        return;
+      }
+      if (operationToken.current === token) stopActivity();
+    },
+    [stopActivity],
+  );
+
+  const compareLastPhotos = useCallback(async () => {
+    if (frames.length < 2 || activity !== "idle") return;
+    const token = ++operationToken.current;
+    const before = frames.at(-2)!;
+    const after = frames.at(-1)!;
+    const surface = playbackSurfaceRef.current;
+    if (!surface) return;
+    setInspectionFrame(null);
+    setActivity("playing");
+    setPlaybackKind("compare");
+    try {
+      await surface.preload([before, after]);
+      while (operationToken.current === token) {
+        await surface.show(before);
+        if (operationToken.current !== token) return;
+        setPlaybackVisible(true);
+        setCompareLabel("Avant");
+        await wait(750);
+        if (operationToken.current !== token) return;
+        await surface.show(after);
+        if (operationToken.current !== token) return;
+        setCompareLabel("Après");
+        await wait(750);
+      }
+    } catch {
+      if (operationToken.current === token) {
+        setMessage("Ces deux photos ne peuvent pas être comparées.");
+        stopActivity();
+      }
+    }
+  }, [activity, frames, stopActivity]);
+
+  const takePhoto = useCallback(async () => {
     if (!project || !videoRef.current || !cameraReady || activity !== "idle")
       return;
-    if (frames.length >= 240)
-      return setMessage(
+    if (frames.length >= 240) {
+      setMessage(
         "Ton film a déjà 240 photos. Tu peux en supprimer avant de continuer.",
       );
+      return;
+    }
     const token = ++operationToken.current;
+    setInspectionFrame(null);
     setMessage("");
     setActivity("countdown");
     for (let number = project.countdownSeconds; number > 0; number -= 1) {
@@ -234,12 +372,21 @@ export function Studio() {
     setCountdown(null);
     setActivity("capturing");
     try {
-      const captured = await captureVideoFrame(videoRef.current);
+      const captured = await captureVideoFrame(
+        videoRef.current,
+        project.orientation,
+      );
       if (operationToken.current !== token) return;
       await addCapturedFrame(captured);
       navigator.vibrate?.([45, 40, 80]);
+      if (captured.sourceBelowFullHd && !lowerResolutionNotified.current) {
+        lowerResolutionNotified.current = true;
+        setMessage(
+          "La caméra fournit une image moins précise, Stomo l’adapte en Full HD.",
+        );
+      }
       const updatedFrames = useStomoStore.getState().frames;
-      await play(
+      await playMotionAid(
         updatedFrames.slice(-project.autoPreviewFrames),
         project.autoPreviewLoops,
         token,
@@ -256,7 +403,20 @@ export function Studio() {
           : "La photo n’a pas pu être prise.",
       );
     }
-  };
+  }, [
+    activity,
+    addCapturedFrame,
+    cameraReady,
+    frames.length,
+    playMotionAid,
+    project,
+  ]);
+  takePhotoRef.current = () => void takePhoto();
+
+  const headset = useHeadsetRemote(
+    () => takePhotoRef.current(),
+    Boolean(project),
+  );
 
   const runExport = async (
     label: string,
@@ -318,7 +478,10 @@ export function Studio() {
         </button>
       </header>
 
-      <section className="camera-stage" aria-label="Caméra et montage">
+      <section
+        className={`camera-stage camera-stage--${project.orientation}`}
+        aria-label="Caméra et montage"
+      >
         <video
           ref={videoRef}
           className="camera-video"
@@ -343,9 +506,9 @@ export function Studio() {
         {!cameraReady && !cameraError && (
           <div className="camera-loading">J’allume la caméra…</div>
         )}
-        {onionFrame && project.onionOpacity > 0 && !playbackFrame && (
+        {onionFrame && project.onionOpacity > 0 && !playbackVisible && (
           <BlobImage
-            key={onionFrame.id}
+            key={`${onionFrame.id}-${onionFrame.image.size}`}
             className="onion-image"
             blob={onionFrame.image}
             alt="Dernière photo en transparence"
@@ -360,18 +523,30 @@ export function Studio() {
             <i />
           </div>
         )}
-        {playbackFrame && (
-          <BlobImage
-            key={playbackFrame.id}
-            className="playback-image"
-            blob={playbackFrame.image}
-            alt="Lecture du film"
-          />
+        <SmoothPlayback ref={playbackSurfaceRef} />
+        {inspectionFrame && !playbackVisible && (
+          <button
+            className="inspection-view"
+            type="button"
+            onClick={() => setInspectionFrame(null)}
+            aria-label="Fermer la photo et revenir à la caméra"
+          >
+            <BlobImage
+              key={`${inspectionFrame.id}-${inspectionFrame.image.size}`}
+              className="inspection-image"
+              blob={inspectionFrame.image}
+              alt={`Photo ${inspectionFrame.position + 1} en grand`}
+            />
+            <RiCloseLine aria-hidden="true" />
+          </button>
         )}
         {countdown !== null && (
           <div className="countdown" aria-live="assertive">
             {countdown}
           </div>
+        )}
+        {playbackKind === "compare" && compareLabel && (
+          <div className="compare-label">{compareLabel}</div>
         )}
 
         <div className="stage-tools stage-tools--left">
@@ -413,11 +588,21 @@ export function Studio() {
             aria-label="Voir mon film"
             className="tool-button"
             type="button"
-            onClick={() => void play(frames, 1)}
+            onClick={() => void playFilm(frames)}
             disabled={!frames.length || busy}
           >
             <RiPlayFill aria-hidden="true" />
             <span>Voir mon film</span>
+          </button>
+          <button
+            aria-label="Comparer les deux dernières photos"
+            className="tool-button"
+            type="button"
+            onClick={() => void compareLastPhotos()}
+            disabled={frames.length < 2 || busy}
+          >
+            <RiContrast2Line aria-hidden="true" />
+            <span>Comparer</span>
           </button>
           <button
             aria-label="Ouvrir les réglages"
@@ -432,12 +617,42 @@ export function Studio() {
 
         {activity === "playing" ? (
           <button
-            className="capture-button capture-button--stop"
+            className={`capture-button capture-button--stop${
+              playbackKind === "aid" ? " capture-button--replay" : ""
+            }`}
             type="button"
             onClick={stopActivity}
+            aria-label={
+              playbackKind === "aid"
+                ? `Relecture ${previewPass} sur ${project.autoPreviewLoops}. Passer.`
+                : "Arrêter"
+            }
           >
-            <RiPauseFill aria-hidden="true" />
-            <span>Arrêter le film</span>
+            {playbackKind === "aid" ? (
+              <>
+                <RiSkipForwardFill aria-hidden="true" />
+                <span className="replay-status" aria-hidden="true">
+                  <small>Relecture</small>
+                  <i>
+                    {Array.from(
+                      { length: project.autoPreviewLoops },
+                      (_, index) => (
+                        <b
+                          className={index < previewPass ? "is-done" : ""}
+                          key={index}
+                        />
+                      ),
+                    )}
+                  </i>
+                </span>
+                <span>Passer</span>
+              </>
+            ) : (
+              <>
+                <RiPauseFill aria-hidden="true" />
+                <span>Arrêter</span>
+              </>
+            )}
           </button>
         ) : (
           <button
@@ -455,7 +670,10 @@ export function Studio() {
         <button
           className="timeline-toggle"
           type="button"
-          onClick={() => setTimelineOpen((open) => !open)}
+          onClick={() => {
+            setTimelineOpen((open) => !open);
+            setInspectionFrame(null);
+          }}
         >
           <RiListCheck2 aria-hidden="true" />{" "}
           {timelineOpen
@@ -465,6 +683,15 @@ export function Studio() {
 
         {timelineOpen && (
           <section className="timeline-panel" aria-label="Frise des photos">
+            <button
+              className="timeline-panel__close"
+              type="button"
+              onClick={() => setTimelineOpen(false)}
+              aria-label="Fermer la frise des photos"
+              title="Fermer la frise"
+            >
+              <RiCloseLine aria-hidden="true" />
+            </button>
             <div className="timeline-list">
               {frames.length ? (
                 frames.map((frame) => (
@@ -476,10 +703,14 @@ export function Studio() {
                     }
                     type="button"
                     key={frame.id}
-                    onClick={() => chooseFrame(frame.id)}
+                    onClick={() => {
+                      chooseFrame(frame.id);
+                      setInspectionFrame(frame);
+                    }}
                   >
                     <BlobImage
                       blob={frame.thumbnail}
+                      fallbackBlob={frame.image}
                       alt={`Photo ${frame.position + 1}`}
                     />
                     <span>{frame.position + 1}</span>
@@ -492,6 +723,8 @@ export function Studio() {
             <div className="timeline-actions">
               <button
                 type="button"
+                aria-label="Déplacer la photo à gauche"
+                title="À gauche"
                 onClick={() => void moveSelectedFrame(-1)}
                 disabled={!selectedFrame}
               >
@@ -500,6 +733,8 @@ export function Studio() {
               </button>
               <button
                 type="button"
+                aria-label="Dupliquer la photo"
+                title="Dupliquer"
                 onClick={() => void duplicateSelectedFrame()}
                 disabled={!selectedFrame || frames.length >= 240}
               >
@@ -508,6 +743,8 @@ export function Studio() {
               </button>
               <button
                 type="button"
+                aria-label="Supprimer la photo"
+                title="Supprimer"
                 onClick={() => void removeSelectedFrame()}
                 disabled={!selectedFrame}
               >
@@ -516,6 +753,8 @@ export function Studio() {
               </button>
               <button
                 type="button"
+                aria-label="Déplacer la photo à droite"
+                title="À droite"
                 onClick={() => void moveSelectedFrame(1)}
                 disabled={!selectedFrame}
               >
@@ -555,6 +794,16 @@ export function Studio() {
           seconde
         </span>
       </div>
+      {headset.status === "blocked" && (
+        <button
+          className="headset-reconnect"
+          type="button"
+          onClick={() => void headset.reconnect()}
+        >
+          <RiHeadphoneLine aria-hidden="true" /> Touche ici pour reconnecter le
+          bouton du casque
+        </button>
+      )}
       {message && (
         <div className="toast" role="status">
           {message}
@@ -573,6 +822,66 @@ export function Studio() {
           <div className="dialog__content settings-list">
             <label>
               <span>
+                <RiCameraSwitchLine aria-hidden="true" />
+                <strong>Caméra</strong>
+                <small>La caméra avant est choisie au début.</small>
+              </span>
+              <select
+                value={project.cameraDeviceId ?? ""}
+                onChange={(event) => {
+                  const device = cameraDevices.find(
+                    (candidate) => candidate.deviceId === event.target.value,
+                  );
+                  const label = device?.label.toLocaleLowerCase("fr") ?? "";
+                  void updateProject({
+                    cameraDeviceId: event.target.value || null,
+                    cameraFacing: /back|rear|arrière|dos/.test(label)
+                      ? "environment"
+                      : "user",
+                  });
+                }}
+              >
+                {!cameraDevices.length && (
+                  <option value="">Caméra avant</option>
+                )}
+                {cameraDevices.map((device, index) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {cameraLabel(device, index)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>
+                {project.orientation === "portrait" ? (
+                  <RiSmartphoneLine aria-hidden="true" />
+                ) : (
+                  <RiLandscapeLine aria-hidden="true" />
+                )}
+                <strong>Sens du film</strong>
+                <small>
+                  {frames.length
+                    ? "Le sens est fixé après la première photo."
+                    : "Choisis avant de prendre la première photo."}
+                </small>
+              </span>
+              <select
+                value={project.orientation}
+                disabled={frames.length > 0}
+                onChange={(event) => {
+                  const orientation = event.target.value as FilmOrientation;
+                  void updateProject({
+                    orientation,
+                    ...FULL_HD[orientation],
+                  });
+                }}
+              >
+                <option value="landscape">Paysage</option>
+                <option value="portrait">Vertical</option>
+              </select>
+            </label>
+            <label>
+              <span>
                 <RiTimerLine aria-hidden="true" />
                 <strong>Retardateur</strong>
                 <small>Le temps pour retirer ta main.</small>
@@ -589,8 +898,33 @@ export function Studio() {
               >
                 <option value={0}>Sans retardateur</option>
                 <option value={1}>1 seconde</option>
+                <option value={2}>2 secondes</option>
                 <option value={3}>3 secondes</option>
                 <option value={5}>5 secondes</option>
+              </select>
+            </label>
+            <label>
+              <span>
+                <RiPlayFill aria-hidden="true" />
+                <strong>Aide après chaque photo</strong>
+                <small>Rejoue doucement les 6 dernières photos.</small>
+              </span>
+              <select
+                value={project.autoPreviewLoops}
+                onChange={(event) =>
+                  void updateProject({
+                    autoPreviewLoops: Number(
+                      event.target.value,
+                    ) as AutoPreviewLoops,
+                  })
+                }
+              >
+                <option value={0}>Ne pas rejouer</option>
+                {[1, 2, 3, 4].map((loops) => (
+                  <option key={loops} value={loops}>
+                    {loops} passage{loops > 1 ? "s" : ""}
+                  </option>
+                ))}
               </select>
             </label>
             <label>
@@ -633,20 +967,6 @@ export function Studio() {
                 }
               />
             </label>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() =>
-                void updateProject({
-                  cameraFacing:
-                    project.cameraFacing === "environment"
-                      ? "user"
-                      : "environment",
-                })
-              }
-            >
-              <RiCameraSwitchLine aria-hidden="true" /> Changer de caméra
-            </button>
           </div>
         </Dialog>
       )}
@@ -671,7 +991,7 @@ export function Studio() {
               <RiImageDownloadLine aria-hidden="true" />
               <span>
                 <strong>Enregistrer cette photo</strong>
-                <small>Une image JPEG</small>
+                <small>Une image JPEG en Full HD</small>
               </span>
             </button>
             <button
@@ -701,7 +1021,7 @@ export function Studio() {
               <RiFilmLine aria-hidden="true" />
               <span>
                 <strong>Enregistrer la vidéo</strong>
-                <small>Un film WebM muet</small>
+                <small>Un film WebM muet en Full HD</small>
               </span>
             </button>
             <button
@@ -716,7 +1036,7 @@ export function Studio() {
               <RiFolderDownloadLine aria-hidden="true" />
               <span>
                 <strong>Sauvegarder ce projet</strong>
-                <small>Un fichier .stomo à reprendre</small>
+                <small>Images et réglages dans un fichier .stomo</small>
               </span>
             </button>
             <p className="download-help">

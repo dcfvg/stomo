@@ -1,4 +1,11 @@
-import { BlobReader, TextWriter, ZipReader } from "@zip.js/zip.js";
+import {
+  BlobReader,
+  BlobWriter,
+  TextReader,
+  TextWriter,
+  ZipReader,
+  ZipWriter,
+} from "@zip.js/zip.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FrameRecord, ProjectRecord } from "../types";
 
@@ -9,6 +16,7 @@ vi.mock("./images", () => ({
   createThumbnail: vi.fn(
     async () => new Blob(["thumb"], { type: "image/webp" }),
   ),
+  normalizeImageToWebp: vi.fn(async (blob: Blob) => blob),
 }));
 
 import {
@@ -17,7 +25,7 @@ import {
   importProject,
   safeFileName,
 } from "./downloads";
-import { imageBlobToJpeg } from "./images";
+import { createThumbnail, imageBlobToJpeg } from "./images";
 
 const project: ProjectRecord = {
   id: "project-export",
@@ -34,6 +42,8 @@ const project: ProjectRecord = {
   frameCount: 0,
   gridEnabled: false,
   cameraFacing: "environment",
+  cameraDeviceId: null,
+  orientation: "landscape",
 };
 
 function frames(count: number): FrameRecord[] {
@@ -103,7 +113,80 @@ describe("téléchargements", () => {
     const manifest = JSON.parse(
       await manifestEntry.getData(new TextWriter()),
     ) as { version: number };
-    expect(manifest.version).toBe(1);
+    expect(manifest.version).toBe(2);
+    expect(
+      archiveEntries.filter((entry) => entry.filename.startsWith("images/")),
+    ).toHaveLength(3);
+    expect(
+      archiveEntries.filter((entry) => entry.filename.startsWith("vignettes/")),
+    ).toHaveLength(3);
+  });
+
+  it.each([1, 220, 240])(
+    "place %i originaux et vignettes non vides dans .stomo v2",
+    async (count) => {
+      const archive = await buildProjectArchive(
+        { ...project, frameCount: count },
+        frames(count),
+        () => undefined,
+      );
+      const archiveEntries = await entries(archive);
+      const mediaEntries = archiveEntries.filter(
+        (entry) =>
+          entry.filename.startsWith("images/") ||
+          entry.filename.startsWith("vignettes/"),
+      );
+      expect(mediaEntries).toHaveLength(count * 2);
+      for (const entry of mediaEntries) {
+        if (entry.directory) throw new Error("Média transformé en dossier");
+        expect((await entry.getData(new BlobWriter())).size).toBeGreaterThan(0);
+      }
+    },
+    30_000,
+  );
+
+  it("importe une sauvegarde v1 et régénère sa vignette", async () => {
+    const writer = new ZipWriter(new BlobWriter("application/x-stomo"));
+    const legacyManifest = {
+      format: "stomo-project",
+      version: 1,
+      project: {
+        name: "Ancien film",
+        fps: 8,
+        countdownSeconds: 3,
+        onionOpacity: 0.4,
+        autoPreviewFrames: 8,
+        autoPreviewLoops: 2,
+        width: 1280,
+        height: 720,
+        gridEnabled: false,
+        cameraFacing: "environment",
+      },
+      frames: [{ file: "images/0001.webp", position: 0 }],
+    };
+    await writer.add(
+      "projet.json",
+      new TextReader(JSON.stringify(legacyManifest)),
+    );
+    await writer.add(
+      "images/0001.webp",
+      new BlobReader(new Blob(["legacy-image"], { type: "image/webp" })),
+    );
+    const archive = await writer.close();
+
+    const imported = await importProject(
+      new File([archive], "ancien.stomo"),
+      () => undefined,
+    );
+
+    expect(imported.project).toMatchObject({
+      name: "Ancien film (importé)",
+      orientation: "landscape",
+      width: 1920,
+      height: 1080,
+    });
+    expect(imported.frames).toHaveLength(1);
+    expect(createThumbnail).toHaveBeenCalled();
   });
 
   it("laisse les photos intactes si un ZIP est interrompu", async () => {

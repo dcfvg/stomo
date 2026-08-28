@@ -4,8 +4,11 @@ import {
   createProject,
   deleteFrame,
   duplicateFrame,
+  getProjectPreviewFrame,
+  getProject,
   listFrames,
   moveFrame,
+  normalizeFrameRecord,
 } from "./database";
 
 const image = () => new Blob(["image"], { type: "image/webp" });
@@ -40,5 +43,58 @@ describe("montage stocké dans le navigateur", () => {
       "240 photos",
     );
     expect(await listFrames(project.id)).toHaveLength(240);
+  });
+
+  it("crée les nouveaux films en Full HD, caméra avant et retardateur 2 s", async () => {
+    const landscape = await createProject(`Paysage ${crypto.randomUUID()}`);
+    const portrait = await createProject(
+      `Vertical ${crypto.randomUUID()}`,
+      "portrait",
+    );
+    expect(await getProject(landscape.id)).toMatchObject({
+      orientation: "landscape",
+      width: 1920,
+      height: 1080,
+      countdownSeconds: 2,
+      cameraFacing: "user",
+      autoPreviewFrames: 6,
+      autoPreviewLoops: 2,
+    });
+    expect(await getProject(portrait.id)).toMatchObject({
+      orientation: "portrait",
+      width: 1080,
+      height: 1920,
+    });
+  });
+
+  it("utilise l’original immédiatement quand une vignette manque", async () => {
+    const original = image();
+    const frame = normalizeFrameRecord({
+      id: "frame-vignette",
+      projectId: "project-vignette",
+      position: 0,
+      image: original,
+      thumbnail: new Blob([]),
+    });
+    expect(frame.thumbnail).toBe(original);
+    expect(frame.thumbnailNeedsRepair).toBe(true);
+  });
+
+  it("utilise la dernière photo comme aperçu du film", async () => {
+    const project = await createProject(`Aperçu ${crypto.randomUUID()}`);
+    await addFrame(
+      project.id,
+      new Blob(["original-1"], { type: "image/webp" }),
+      new Blob(["vignette-1"], { type: "image/webp" }),
+    );
+    const second = await addFrame(
+      project.id,
+      new Blob(["original-2"], { type: "image/webp" }),
+      new Blob(["vignette-numero-2"], { type: "image/webp" }),
+    );
+
+    const preview = await getProjectPreviewFrame(project.id);
+    expect(preview?.position).toBe(1);
+    expect(preview?.id).toBe(second.id);
   });
 });

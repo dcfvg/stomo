@@ -15,8 +15,17 @@ import {
   listFrames,
   saveProject,
 } from "../storage/database";
-import type { FrameRecord, ProjectRecord, StomoManifestV1 } from "../types";
-import { createThumbnail, imageBlobToJpeg } from "./images";
+import type {
+  FrameRecord,
+  ProjectRecord,
+  StomoManifest,
+  StomoManifestV2,
+} from "../types";
+import {
+  createThumbnail,
+  imageBlobToJpeg,
+  normalizeImageToWebp,
+} from "./images";
 import { framesToWebm } from "./webm";
 
 export function safeFileName(name: string) {
@@ -122,6 +131,7 @@ export async function exportVideo(
     project.width,
     project.height,
     onProgress,
+    (frame) => normalizeImageToWebp(frame.image, project.width, project.height),
   );
   downloadBlob(video, `${safeFileName(project.name)}.webm`);
 }
@@ -131,26 +141,39 @@ export async function buildProjectArchive(
   frames: FrameRecord[],
   onProgress: (current: number, total: number) => void,
 ) {
+  if (frames.length !== project.frameCount)
+    throw new Error(
+      "Une photo déclarée manque dans le projet. La sauvegarde est arrêtée.",
+    );
   const writer = new ZipWriter(new BlobWriter("application/x-stomo"));
-  const files = frames.map(
+  const imageFiles = frames.map(
     (_, index) => `images/${String(index + 1).padStart(4, "0")}.webp`,
   );
-  const manifest: StomoManifestV1 = {
+  const thumbnailFiles = frames.map(
+    (_, index) => `vignettes/${String(index + 1).padStart(4, "0")}.webp`,
+  );
+  const manifest: StomoManifestV2 = {
     format: "stomo-project",
-    version: 1,
+    version: 2,
     project: {
       name: project.name,
       fps: project.fps,
       countdownSeconds: project.countdownSeconds,
       onionOpacity: project.onionOpacity,
-      autoPreviewFrames: 8,
-      autoPreviewLoops: 2,
+      autoPreviewFrames: project.autoPreviewFrames,
+      autoPreviewLoops: project.autoPreviewLoops,
       width: project.width,
       height: project.height,
       gridEnabled: project.gridEnabled,
       cameraFacing: project.cameraFacing,
+      cameraDeviceId: project.cameraDeviceId,
+      orientation: project.orientation,
     },
-    frames: files.map((file, position) => ({ file, position })),
+    frames: imageFiles.map((imageFile, position) => ({
+      imageFile,
+      thumbnailFile: thumbnailFiles[position],
+      position,
+    })),
   };
   try {
     await writer.add(
@@ -158,8 +181,24 @@ export async function buildProjectArchive(
       new TextReader(JSON.stringify(manifest, null, 2)),
     );
     for (let index = 0; index < frames.length; index += 1) {
+      if (
+        !(frames[index].image instanceof Blob) ||
+        frames[index].image.size === 0
+      )
+        throw new Error(
+          `La photo ${index + 1} est vide. La sauvegarde est arrêtée.`,
+        );
       onProgress(index + 1, frames.length);
-      await writer.add(files[index], new BlobReader(frames[index].image), {
+      const thumbnail =
+        frames[index].thumbnail instanceof Blob &&
+        frames[index].thumbnail.size > 0 &&
+        !frames[index].thumbnailNeedsRepair
+          ? frames[index].thumbnail
+          : await createThumbnail(frames[index].image, project.orientation);
+      await writer.add(imageFiles[index], new BlobReader(frames[index].image), {
+        level: 0,
+      });
+      await writer.add(thumbnailFiles[index], new BlobReader(thumbnail), {
         level: 0,
       });
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -180,12 +219,12 @@ export async function exportProject(
   downloadBlob(archive, `${safeFileName(project.name)}.stomo`);
 }
 
-function isManifest(value: unknown): value is StomoManifestV1 {
+function isManifest(value: unknown): value is StomoManifest {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return (
     record.format === "stomo-project" &&
-    record.version === 1 &&
+    (record.version === 1 || record.version === 2) &&
     Array.isArray(record.frames)
   );
 }
@@ -210,7 +249,15 @@ export async function importProject(
     if (manifest.frames.length > 240)
       throw new Error("Ce projet contient plus de 240 photos.");
 
-    const created = await createProject(`${manifest.project.name} (importé)`);
+    const orientation =
+      manifest.project.orientation ??
+      (manifest.project.height > manifest.project.width
+        ? "portrait"
+        : "landscape");
+    const created = await createProject(
+      `${manifest.project.name} (importé)`,
+      orientation,
+    );
     createdId = created.id;
     await saveProject({
       ...created,
@@ -220,16 +267,43 @@ export async function importProject(
       createdAt: created.createdAt,
       updatedAt: Date.now(),
       frameCount: 0,
+      orientation,
+      cameraDeviceId: manifest.project.cameraDeviceId ?? null,
     });
-    for (let index = 0; index < manifest.frames.length; index += 1) {
-      const descriptor = manifest.frames[index];
-      const entry = entries.find(
-        (candidate) => candidate.filename === descriptor.file,
+    const frameOrder = manifest.frames
+      .map((descriptor, index) => ({ index, position: descriptor.position }))
+      .sort((a, b) => a.position - b.position);
+    for (let index = 0; index < frameOrder.length; index += 1) {
+      const sourceIndex = frameOrder[index].index;
+      let imageFile: string;
+      let thumbnailFile: string | null = null;
+      if (manifest.version === 1) {
+        imageFile = manifest.frames[sourceIndex].file;
+      } else {
+        imageFile = manifest.frames[sourceIndex].imageFile;
+        thumbnailFile = manifest.frames[sourceIndex].thumbnailFile;
+      }
+      const imageEntry = entries.find(
+        (candidate) => candidate.filename === imageFile,
       );
-      if (!entry || entry.directory)
+      if (!imageEntry || imageEntry.directory)
         throw new Error(`La photo ${index + 1} manque dans ce projet.`);
-      const image = await entry.getData(new BlobWriter("image/webp"));
-      const thumbnail = await createThumbnail(image);
+      const image = await imageEntry.getData(new BlobWriter("image/webp"));
+      if (!image.size)
+        throw new Error(`La photo ${index + 1} est vide dans ce projet.`);
+      let thumbnail: Blob | null = null;
+      if (thumbnailFile) {
+        const thumbnailEntry = entries.find(
+          (candidate) => candidate.filename === thumbnailFile,
+        );
+        if (thumbnailEntry && !thumbnailEntry.directory) {
+          const storedThumbnail = await thumbnailEntry.getData(
+            new BlobWriter("image/webp"),
+          );
+          if (storedThumbnail.size) thumbnail = storedThumbnail;
+        }
+      }
+      thumbnail ??= await createThumbnail(image, orientation);
       await addFrame(created.id, image, thumbnail);
       onProgress(index + 1, manifest.frames.length);
     }

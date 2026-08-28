@@ -33,7 +33,7 @@ export default defineConfig({
       },
     }),
   ],
-  server: { host: "127.0.0.1", port: 4173 },
+  server: { host: "0.0.0.0", port: 4174 },
   build: { target: "chrome101" },
   test: {
     environment: "jsdom",

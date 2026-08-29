@@ -161,7 +161,8 @@ export function SessionUi({
                 type="button"
                 onClick={() => void onEnterFullscreen()}
               >
-                <RiFullscreenLine aria-hidden="true" /> Plein écran
+                <RiFullscreenLine aria-hidden="true" />
+                <span>Plein écran</span>
               </button>
             )}
             <button
@@ -173,13 +174,30 @@ export function SessionUi({
             </button>
           </>
         ) : (
-          <button
-            className="session-state"
-            type="button"
-            onClick={() => setShowStart(true)}
-          >
-            <RiShieldStarLine aria-hidden="true" /> Démarrer une session enfant
-          </button>
+          <>
+            {!fullscreenActive &&
+              document.fullscreenEnabled &&
+              !window.matchMedia?.("(display-mode: standalone)").matches && (
+                <button
+                  className="compact-action compact-action--fullscreen"
+                  type="button"
+                  onClick={() => void onEnterFullscreen()}
+                  aria-label="Passer en plein écran"
+                  title="Plein écran"
+                >
+                  <RiFullscreenLine aria-hidden="true" />
+                  <span>Plein écran</span>
+                </button>
+              )}
+            <button
+              className="session-state"
+              type="button"
+              onClick={() => setShowStart(true)}
+            >
+              <RiShieldStarLine aria-hidden="true" /> Démarrer une session
+              enfant
+            </button>
+          </>
         )}
       </div>
 

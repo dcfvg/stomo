@@ -21,7 +21,11 @@ describe("bouton lecture/pause du casque", () => {
       pause = pause;
     }
     vi.stubGlobal("Audio", AudioMock);
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:quiet");
+    let quietAudioSize = 0;
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      quietAudioSize = blob instanceof Blob ? blob.size : 0;
+      return "blob:quiet";
+    });
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     Object.defineProperty(navigator, "mediaSession", {
       configurable: true,
@@ -39,6 +43,7 @@ describe("bouton lecture/pause du casque", () => {
       useHeadsetRemote(trigger, true),
     );
     await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(quietAudioSize).toBeGreaterThanOrEqual(160_044);
 
     act(() => {
       handlers.get("play")?.({ action: "play" } as MediaSessionActionDetails);

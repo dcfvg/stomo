@@ -1,17 +1,6 @@
-import type { FrameRecord } from "../types";
+import type { FrameSummary } from "../types";
 
 const bytes = (...values: number[]) => new Uint8Array(values);
-
-function concat(parts: Uint8Array[]) {
-  const length = parts.reduce((total, part) => total + part.length, 0);
-  const result = new Uint8Array(length);
-  let offset = 0;
-  parts.forEach((part) => {
-    result.set(part, offset);
-    offset += part.length;
-  });
-  return result;
-}
 
 function id(value: number) {
   const result: number[] = [];
@@ -38,8 +27,14 @@ function size(value: number) {
   throw new Error("La vidéo est trop grande pour être préparée.");
 }
 
-function element(elementId: number, data: Uint8Array) {
-  return concat([id(elementId), size(data.length), data]);
+function element(elementId: number, data: Blob | Uint8Array) {
+  const asPart = (value: Uint8Array) =>
+    value.buffer.slice(
+      value.byteOffset,
+      value.byteOffset + value.byteLength,
+    ) as ArrayBuffer;
+  const payload = data instanceof Blob ? data : new Blob([asPart(data)]);
+  return new Blob([asPart(id(elementId)), asPart(size(payload.size)), payload]);
 }
 
 function uint(value: number) {
@@ -62,81 +57,91 @@ function text(value: string) {
   return new TextEncoder().encode(value);
 }
 
-function extractVp8(webp: Uint8Array) {
-  for (let offset = 12; offset + 8 <= webp.length; ) {
+async function extractVp8(webp: Blob) {
+  if (webp.size < 20)
+    throw new Error("Une photo n’utilise pas le format vidéo attendu.");
+  let offset = 12;
+  while (offset + 8 <= webp.size) {
+    const header = new Uint8Array(
+      await webp.slice(offset, offset + 8).arrayBuffer(),
+    );
     const name = String.fromCharCode(
-      webp[offset],
-      webp[offset + 1],
-      webp[offset + 2],
-      webp[offset + 3],
+      header[0],
+      header[1],
+      header[2],
+      header[3],
     );
     const length =
-      webp[offset + 4] |
-      (webp[offset + 5] << 8) |
-      (webp[offset + 6] << 16) |
-      (webp[offset + 7] << 24);
+      header[4] | (header[5] << 8) | (header[6] << 16) | (header[7] << 24);
     if (name === "VP8 ") return webp.slice(offset + 8, offset + 8 + length);
     offset += 8 + length + (length % 2);
   }
   throw new Error("Une photo n’utilise pas le format vidéo attendu.");
 }
 
-function simpleBlock(relativeTimecode: number, frame: Uint8Array) {
+function simpleBlock(relativeTimecode: number, frame: Blob) {
   const header = bytes(
     0x81,
     (relativeTimecode >> 8) & 0xff,
     relativeTimecode & 0xff,
     0x80,
   );
-  return element(0xa3, concat([header, frame]));
+  return element(0xa3, new Blob([header, frame]));
 }
 
-export async function framesToWebm(
-  frames: FrameRecord[],
+interface PreparedFrame {
+  time: number;
+  payload: Blob;
+}
+
+function cluster(clusterTime: number, frames: PreparedFrame[]) {
+  return element(
+    0x1f43b675,
+    new Blob([
+      element(0xe7, uint(clusterTime)),
+      ...frames.map((frame) =>
+        simpleBlock(frame.time - clusterTime, frame.payload),
+      ),
+    ]),
+  );
+}
+
+export async function framesToWebm<T extends FrameSummary>(
+  frames: T[],
   fps: number,
   width: number,
   height: number,
   onProgress?: (current: number, total: number) => void,
-  prepareImage: (frame: FrameRecord) => Promise<Blob> = async (frame) =>
-    frame.image,
+  prepareImage: (frame: T) => Promise<Blob> = async (frame) => {
+    if ("image" in frame && frame.image instanceof Blob) return frame.image;
+    throw new Error("Cette photo est introuvable.");
+  },
 ) {
   if (!frames.length)
     throw new Error("Prends au moins une photo avant d’enregistrer une vidéo.");
   const frameDuration = 1000 / fps;
-  const clusters: Uint8Array[] = [];
+  const clusters: Blob[] = [];
   let clusterTime = -1;
-  let clusterBlocks: Uint8Array[] = [];
+  let clusterFrames: PreparedFrame[] = [];
 
   for (let index = 0; index < frames.length; index += 1) {
     const time = Math.round(index * frameDuration);
-    if (clusterTime < 0 || time - clusterTime > 30_000) {
-      if (clusterBlocks.length) {
-        clusters.push(
-          element(
-            0x1f43b675,
-            concat([element(0xe7, uint(clusterTime)), ...clusterBlocks]),
-          ),
-        );
-      }
+    if (clusterTime < 0) clusterTime = time;
+    if (time - clusterTime >= 1_000 && clusterFrames.length) {
+      clusters.push(cluster(clusterTime, clusterFrames));
       clusterTime = time;
-      clusterBlocks = [];
+      clusterFrames = [];
     }
     const preparedImage = await prepareImage(frames[index]);
-    const vp8 = extractVp8(new Uint8Array(await preparedImage.arrayBuffer()));
-    clusterBlocks.push(simpleBlock(time - clusterTime, vp8));
+    clusterFrames.push({ time, payload: await extractVp8(preparedImage) });
     onProgress?.(index + 1, frames.length);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
-  clusters.push(
-    element(
-      0x1f43b675,
-      concat([element(0xe7, uint(clusterTime)), ...clusterBlocks]),
-    ),
-  );
+  if (clusterFrames.length) clusters.push(cluster(clusterTime, clusterFrames));
 
   const ebmlHeader = element(
     0x1a45dfa3,
-    concat([
+    new Blob([
       element(0x4286, uint(1)),
       element(0x42f7, uint(1)),
       element(0x42f2, uint(4)),
@@ -148,7 +153,7 @@ export async function framesToWebm(
   );
   const info = element(
     0x1549a966,
-    concat([
+    new Blob([
       element(0x2ad7b1, uint(1_000_000)),
       element(0x4489, float64(frames.length * frameDuration)),
       element(0x4d80, text("Stomo")),
@@ -157,11 +162,11 @@ export async function framesToWebm(
   );
   const video = element(
     0xe0,
-    concat([element(0xb0, uint(width)), element(0xba, uint(height))]),
+    new Blob([element(0xb0, uint(width)), element(0xba, uint(height))]),
   );
   const trackEntry = element(
     0xae,
-    concat([
+    new Blob([
       element(0xd7, uint(1)),
       element(0x73c5, uint(1)),
       element(0x83, uint(1)),
@@ -170,7 +175,12 @@ export async function framesToWebm(
       video,
     ]),
   );
-  const tracks = element(0x1654ae6b, trackEntry);
-  const segment = element(0x18538067, concat([info, tracks, ...clusters]));
-  return new Blob([ebmlHeader, segment], { type: "video/webm" });
+  const segmentPayload = new Blob([
+    info,
+    element(0x1654ae6b, trackEntry),
+    ...clusters,
+  ]);
+  return new Blob([ebmlHeader, element(0x18538067, segmentPayload)], {
+    type: "video/webm",
+  });
 }

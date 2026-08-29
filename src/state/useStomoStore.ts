@@ -4,6 +4,7 @@ import {
   createProject,
   deleteFrame,
   duplicateFrame,
+  getFrameImage,
   getProject,
   listFrames,
   listProjects,
@@ -12,7 +13,7 @@ import {
   updateFrameThumbnail,
 } from "../storage/database";
 import { createThumbnail, loadBlobImage } from "../media/images";
-import type { FilmOrientation, FrameRecord, ProjectRecord } from "../types";
+import type { FilmOrientation, FrameSummary, ProjectRecord } from "../types";
 
 interface CapturedFrame {
   image: Blob;
@@ -24,7 +25,7 @@ interface CapturedFrame {
 interface StomoState {
   projects: ProjectRecord[];
   project: ProjectRecord | null;
-  frames: FrameRecord[];
+  frames: FrameSummary[];
   selectedFrameId: string | null;
   loading: boolean;
   notice: string | null;
@@ -32,11 +33,14 @@ interface StomoState {
   createFilm: (name: string, orientation: FilmOrientation) => Promise<void>;
   openFilm: (id: string) => Promise<void>;
   closeFilm: () => Promise<void>;
-  addCapturedFrame: (captured: CapturedFrame) => Promise<FrameRecord>;
+  addCapturedFrame: (captured: CapturedFrame) => Promise<FrameSummary>;
   removeSelectedFrame: () => Promise<void>;
   duplicateSelectedFrame: () => Promise<void>;
   moveSelectedFrame: (direction: -1 | 1) => Promise<void>;
-  updateProject: (patch: Partial<ProjectRecord>) => Promise<void>;
+  updateProject: (
+    patch: Partial<ProjectRecord>,
+    markModified?: boolean,
+  ) => Promise<void>;
   chooseFrame: (id: string) => void;
   setNotice: (notice: string | null) => void;
   refreshProjects: () => Promise<void>;
@@ -53,7 +57,7 @@ async function reloadFilm(projectId: string) {
 
 async function repairThumbnails(
   project: ProjectRecord,
-  frames: FrameRecord[],
+  frames: FrameSummary[],
   update: (recipe: (state: StomoState) => Partial<StomoState>) => void,
 ) {
   for (const frame of frames) {
@@ -63,7 +67,7 @@ async function repairThumbnails(
     } catch {
       try {
         const thumbnail = await createThumbnail(
-          frame.image,
+          await getFrameImage(frame.id),
           project.orientation,
         );
         await updateFrameThumbnail(frame.id, thumbnail);
@@ -129,7 +133,7 @@ export const useStomoStore = create<StomoState>((set, get) => ({
   addCapturedFrame: async ({ image, thumbnail, width, height }) => {
     const current = get().project;
     if (!current) throw new Error("Ouvre d’abord un film.");
-    const frame = await addFrame(current.id, image, thumbnail);
+    const frame = await addFrame(current.id, image, thumbnail, width, height);
     const project = {
       ...current,
       width,
@@ -177,7 +181,7 @@ export const useStomoStore = create<StomoState>((set, get) => ({
     await moveFrame(project.id, selectedFrameId, direction);
     set(await reloadFilm(project.id));
   },
-  updateProject: async (patch) => {
+  updateProject: async (patch, markModified = true) => {
     const current = get().project;
     if (!current) return;
     const project = {
@@ -191,7 +195,7 @@ export const useStomoStore = create<StomoState>((set, get) => ({
             height: current.height,
           }
         : {}),
-      updatedAt: Date.now(),
+      updatedAt: markModified ? Date.now() : current.updatedAt,
     };
     await saveProject(project);
     set({ project });

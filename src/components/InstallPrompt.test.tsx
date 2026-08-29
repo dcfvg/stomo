@@ -21,10 +21,18 @@ describe("proposition d’installation", () => {
   afterEach(cleanup);
 
   beforeEach(() => {
+    localStorage.clear();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockReturnValue({ matches: false }),
     });
+  });
+
+  it("explique l’installation manuelle avant que Chrome propose son dialogue", async () => {
+    const user = userEvent.setup();
+    render(<InstallPrompt />);
+    await user.click(screen.getByRole("button", { name: "Comment installer" }));
+    expect(screen.getByText(/Ajouter à l’écran d’accueil/)).toBeInTheDocument();
   });
 
   it("propose puis déclenche l’installation fournie par Chrome", async () => {

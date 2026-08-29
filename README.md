@@ -11,6 +11,17 @@ Stomo est un studio de stop motion en français, conçu pour être explicite et 
 
 Les photos, vidéos et sauvegardes demandées arrivent dans le dossier **Téléchargements**. Les projets restent aussi dans les données du site Chrome. Avant d’effacer les données de Chrome ou de changer de téléphone, utiliser **Sauvegarder ce projet** pour obtenir un fichier `.stomo`.
 
+Les nouveaux films utilisent la caméra arrière et le retardateur de 2 secondes.
+Ils sont enregistrés en Full HD, en paysage (1920 × 1080) ou en vertical
+(1080 × 1920). La touche lecture/pause d’un casque filaire ou Bluetooth peut
+servir de déclencheur après activation dans les réglages du film.
+
+Stomo accepte jusqu’à **480 photos**. Pour ménager la mémoire des anciens
+téléphones, les originaux restent dans IndexedDB, seules les petites vignettes
+sont chargées dans la frise et les exports sont préparés image par image. À
+partir de 400 photos, l’application avertit l’enfant et vérifie régulièrement
+l’espace disponible.
+
 ## Session enfant et épinglage Android
 
 Stomo ne peut pas empêcher Android de fermer une page web. La protection associe donc deux mécanismes :
@@ -44,13 +55,18 @@ Pour travailler en HTTPS sur le Wi-Fi :
 4. dans Android 7, ouvrir **Réglages → Écran verrouillage/Sécurité → Autres
    paramètres de sécurité → Installer depuis stockage**, puis installer cette
    autorité temporaire ;
-5. lancer `npm run dev:https` et ouvrir l’adresse `https://192.168…:4174`
+5. lancer `npm run dev:https` et ouvrir l’adresse `https://192.168…:4175`
    affichée par Vite.
 
 Retirer cette autorité du téléphone après les essais. Sans certificat, une
 alternative simple est la liaison USB : activer le débogage USB, lancer
-`adb reverse tcp:4174 tcp:4174`, puis ouvrir `http://localhost:4174` sur le
+`adb reverse tcp:4175 tcp:4175`, puis ouvrir `http://localhost:4175` sur le
 téléphone pendant que `npm run dev` tourne sur le Mac.
+
+Le port de développement est volontairement fixé à **4175** : Vite s’arrête
+s’il est occupé au lieu de changer silencieusement d’origine. Pour retrouver
+les mêmes projets, conserve aussi le même protocole et le même nom d’hôte ; la
+liaison USB avec `localhost:4175` est la solution la plus stable.
 
 Les commandes de contrôle sont :
 

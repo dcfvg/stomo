@@ -19,12 +19,14 @@ describe("captureVideoFrame", () => {
       videoHeight: { value: 480 },
     });
 
-    const result = await captureVideoFrame(video);
+    const onSnapshot = vi.fn();
+    const result = await captureVideoFrame(video, "landscape", onSnapshot);
 
     expect(result.width).toBe(1920);
     expect(result.height).toBe(1080);
     expect(result.sourceBelowFullHd).toBe(true);
     expect(result.image.type).toBe("image/webp");
+    expect(onSnapshot).toHaveBeenCalledOnce();
     expect(drawImage).toHaveBeenNthCalledWith(
       1,
       video,
@@ -39,7 +41,11 @@ describe("captureVideoFrame", () => {
     );
     expect(drawImage).toHaveBeenNthCalledWith(
       2,
-      expect.any(HTMLCanvasElement),
+      video,
+      0,
+      60,
+      640,
+      360,
       0,
       0,
       240,

@@ -5,7 +5,7 @@ export interface CameraRequestResult {
 
 export function cameraSecurityMessage() {
   return window.isSecureContext === false
-    ? "Sur le réseau local, Chrome demande une adresse HTTPS. Lance « npm run dev:https » ou relie le téléphone par USB avec adb reverse."
+    ? "Cette adresse ne permet pas d’utiliser la caméra. Demande à un adulte d’ouvrir la version sécurisée de Stomo."
     : null;
 }
 

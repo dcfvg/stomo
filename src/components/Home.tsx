@@ -34,6 +34,13 @@ function durationLabel(duration: number) {
   return `${minutes} min ${seconds % 60} s`;
 }
 
+function projectDateLabel(timestamp: number) {
+  return `Modifié le ${new Intl.DateTimeFormat("fr-FR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(timestamp)}`;
+}
+
 export function Home({ sessionActive, sessionId, sessionEvents }: HomeProps) {
   const { projects, createFilm, openFilm, refreshProjects } = useStomoStore();
   const [showCreate, setShowCreate] = useState(false);
@@ -116,7 +123,13 @@ export function Home({ sessionActive, sessionId, sessionEvents }: HomeProps) {
           <span>Prends ta première photo</span>
         </button>
         {projects.map((project, index) => (
-          <article className="project-card" key={project.id}>
+          <button
+            className="project-card"
+            key={project.id}
+            type="button"
+            onClick={() => void openFilm(project.id)}
+            aria-label={`Continuer ${project.name}`}
+          >
             <ProjectCover
               project={project}
               color={index % 2 ? "cyan" : "coral"}
@@ -129,16 +142,15 @@ export function Home({ sessionActive, sessionId, sessionEvents }: HomeProps) {
                     ? `${Math.max(1, Math.round(project.frameCount / project.fps))} secondes`
                     : "Prêt à commencer"}
                 </span>
+                <span className="project-card__date">
+                  {projectDateLabel(project.updatedAt)}
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => void openFilm(project.id)}
-                aria-label={`Continuer ${project.name}`}
-              >
+              <span className="project-card__open" aria-hidden="true">
                 <RiPlayFill size={24} aria-hidden="true" />
-              </button>
+              </span>
             </div>
-          </article>
+          </button>
         ))}
       </section>
       <section className="home-tools">
@@ -159,7 +171,7 @@ export function Home({ sessionActive, sessionId, sessionEvents }: HomeProps) {
         </button>
         <p>
           <RiDownloadCloud2Line aria-hidden="true" /> Tes films restent dans ce
-          téléphone, même sans internet.
+          téléphone.
         </p>
       </section>
       {error && (

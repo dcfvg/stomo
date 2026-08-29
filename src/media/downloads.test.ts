@@ -35,10 +35,11 @@ const project: ProjectRecord = {
   fps: 8,
   countdownSeconds: 3,
   onionOpacity: 0.4,
+  onionFrameCount: 2,
   autoPreviewFrames: 8,
   autoPreviewLoops: 2,
-  width: 1280,
-  height: 720,
+  width: 1920,
+  height: 1080,
   frameCount: 0,
   gridEnabled: false,
   cameraFacing: "environment",
@@ -70,7 +71,7 @@ describe("téléchargements", () => {
     expect(safeFileName(project.name)).toBe("l-epopee-des-dinos");
   });
 
-  it.each([1, 220, 240])(
+  it.each([1, 240, 480])(
     "crée un ZIP ordonné avec %i photos",
     async (count) => {
       const archive = await buildPhotosZip(
@@ -86,7 +87,7 @@ describe("téléchargements", () => {
       );
       expect(names[count]).toBe("l-epopee-des-dinos_photos/informations.txt");
     },
-    30_000,
+    60_000,
   );
 
   it("sauvegarde puis réimporte un projet sans écraser son identité locale", async () => {
@@ -112,8 +113,9 @@ describe("téléchargements", () => {
       throw new Error("Manifest absent");
     const manifest = JSON.parse(
       await manifestEntry.getData(new TextWriter()),
-    ) as { version: number };
+    ) as { version: number; project: { onionFrameCount?: number } };
     expect(manifest.version).toBe(2);
+    expect(manifest.project.onionFrameCount).toBe(2);
     expect(
       archiveEntries.filter((entry) => entry.filename.startsWith("images/")),
     ).toHaveLength(3);
@@ -122,7 +124,7 @@ describe("téléchargements", () => {
     ).toHaveLength(3);
   });
 
-  it.each([1, 220, 240])(
+  it.each([1, 240, 480])(
     "place %i originaux et vignettes non vides dans .stomo v2",
     async (count) => {
       const archive = await buildProjectArchive(
@@ -142,7 +144,7 @@ describe("téléchargements", () => {
         expect((await entry.getData(new BlobWriter())).size).toBeGreaterThan(0);
       }
     },
-    30_000,
+    60_000,
   );
 
   it("importe une sauvegarde v1 et régénère sa vignette", async () => {
@@ -184,6 +186,7 @@ describe("téléchargements", () => {
       orientation: "landscape",
       width: 1920,
       height: 1080,
+      onionFrameCount: 2,
     });
     expect(imported.frames).toHaveLength(1);
     expect(createThumbnail).toHaveBeenCalled();

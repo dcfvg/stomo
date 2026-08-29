@@ -42,8 +42,8 @@ runMkcert([
 ]);
 
 console.log("\nCertificat Stomo créé pour :");
-console.log("  https://localhost:4174/");
-for (const address of addresses) console.log(`  https://${address}:4174/`);
+console.log("  https://localhost:4175/");
+for (const address of addresses) console.log(`  https://${address}:4175/`);
 console.log(
   "\nSur Android, installe l’autorité racine de mkcert avant d’ouvrir l’adresse locale.",
 );

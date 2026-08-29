@@ -1,4 +1,5 @@
 import type { FilmOrientation } from "../types";
+import { CAPTURE_WEBP_QUALITY } from "../config";
 
 export const FULL_HD = {
   landscape: { width: 1920, height: 1080 },
@@ -62,14 +63,101 @@ function thumbnailSize(orientation: FilmOrientation) {
     : { width: 240, height: 135 };
 }
 
+let imageWorker: Worker | null = null;
+let workerRequestId = 0;
+const workerRequests = new Map<
+  number,
+  { resolve: (value: unknown) => void; reject: (reason: unknown) => void }
+>();
+
+function canUseImageWorker() {
+  return (
+    typeof Worker === "function" &&
+    typeof OffscreenCanvas === "function" &&
+    typeof createImageBitmap === "function"
+  );
+}
+
+function getImageWorker() {
+  if (imageWorker) return imageWorker;
+  imageWorker = new Worker(new URL("./image-worker.ts", import.meta.url), {
+    type: "module",
+  });
+  imageWorker.onmessage = (
+    event: MessageEvent<{ id: number; result?: unknown; error?: string }>,
+  ) => {
+    const pending = workerRequests.get(event.data.id);
+    if (!pending) return;
+    workerRequests.delete(event.data.id);
+    if (event.data.error) pending.reject(new Error(event.data.error));
+    else pending.resolve(event.data.result);
+  };
+  imageWorker.onerror = () => {
+    workerRequests.forEach(({ reject }) =>
+      reject(new Error("Le traitement d’image en arrière-plan a échoué.")),
+    );
+    workerRequests.clear();
+    imageWorker?.terminate();
+    imageWorker = null;
+  };
+  return imageWorker;
+}
+
+function runWorker<T>(
+  request: Record<string, unknown>,
+  transfer: Transferable[] = [],
+) {
+  const id = ++workerRequestId;
+  return new Promise<T>((resolve, reject) => {
+    workerRequests.set(id, {
+      resolve: (value) => resolve(value as T),
+      reject,
+    });
+    getImageWorker().postMessage({ ...request, id }, transfer);
+  });
+}
+
 export async function captureVideoFrame(
   video: HTMLVideoElement,
   orientation: FilmOrientation = "landscape",
+  onSnapshot?: () => void,
 ) {
   const sourceWidth = video.videoWidth;
   const sourceHeight = video.videoHeight;
   if (!sourceWidth || !sourceHeight)
     throw new Error("La caméra n’est pas encore prête.");
+
+  let snapshotNotified = false;
+  const notifySnapshot = () => {
+    if (snapshotNotified) return;
+    snapshotNotified = true;
+    onSnapshot?.();
+  };
+
+  if (canUseImageWorker()) {
+    try {
+      const bitmap = await createImageBitmap(video);
+      notifySnapshot();
+      return await runWorker<{
+        image: Blob;
+        thumbnail: Blob;
+        width: number;
+        height: number;
+        sourceBelowFullHd: boolean;
+      }>(
+        {
+          operation: "capture",
+          source: bitmap,
+          width: sourceWidth,
+          height: sourceHeight,
+          orientation,
+        },
+        [bitmap],
+      );
+    } catch {
+      // Le chemin Canvas classique reste compatible avec Chrome 101.
+    }
+  }
 
   const target = FULL_HD[orientation];
   const croppedSource = coverSource(
@@ -91,16 +179,23 @@ export async function captureVideoFrame(
     target.width,
     target.height,
   );
+  notifySnapshot();
 
-  const image = await canvasBlob(canvas, "image/webp", 0.84);
+  const image = await canvasBlob(canvas, "image/webp", CAPTURE_WEBP_QUALITY);
   const thumbnailTarget = thumbnailSize(orientation);
-  const thumbnailCanvas = document.createElement("canvas");
-  thumbnailCanvas.width = thumbnailTarget.width;
-  thumbnailCanvas.height = thumbnailTarget.height;
-  thumbnailCanvas
-    .getContext("2d")
-    ?.drawImage(canvas, 0, 0, thumbnailTarget.width, thumbnailTarget.height);
-  const thumbnail = await canvasBlob(thumbnailCanvas, "image/webp", 0.72);
+  canvas.width = thumbnailTarget.width;
+  canvas.height = thumbnailTarget.height;
+  drawCover(
+    canvas.getContext("2d")!,
+    video,
+    sourceWidth,
+    sourceHeight,
+    thumbnailTarget.width,
+    thumbnailTarget.height,
+  );
+  const thumbnail = await canvasBlob(canvas, "image/webp", 0.68);
+  canvas.width = 1;
+  canvas.height = 1;
   return {
     image,
     thumbnail,
@@ -161,11 +256,19 @@ export async function imageBlobToJpeg(
     width = image.naturalWidth;
     height = image.naturalHeight;
   }
-  return canvasBlob(
-    await drawBlobToCanvas(blob, width, height),
-    "image/jpeg",
-    0.92,
-  );
+  if (canUseImageWorker())
+    return runWorker<Blob>({
+      operation: "jpeg",
+      source: blob,
+      width,
+      height,
+      orientation: height > width ? "portrait" : "landscape",
+    });
+  const canvas = await drawBlobToCanvas(blob, width, height);
+  const result = await canvasBlob(canvas, "image/jpeg", 0.92);
+  canvas.width = 1;
+  canvas.height = 1;
+  return result;
 }
 
 export async function normalizeImageToWebp(
@@ -173,11 +276,19 @@ export async function normalizeImageToWebp(
   width: number,
   height: number,
 ) {
-  return canvasBlob(
-    await drawBlobToCanvas(blob, width, height),
-    "image/webp",
-    0.84,
-  );
+  if (canUseImageWorker())
+    return runWorker<Blob>({
+      operation: "webp",
+      source: blob,
+      width,
+      height,
+      orientation: height > width ? "portrait" : "landscape",
+    });
+  const canvas = await drawBlobToCanvas(blob, width, height);
+  const result = await canvasBlob(canvas, "image/webp", CAPTURE_WEBP_QUALITY);
+  canvas.width = 1;
+  canvas.height = 1;
+  return result;
 }
 
 export async function createThumbnail(
@@ -185,6 +296,17 @@ export async function createThumbnail(
   orientation: FilmOrientation = "landscape",
 ) {
   const target = thumbnailSize(orientation);
+  if (canUseImageWorker())
+    return runWorker<Blob>({
+      operation: "thumbnail",
+      source: blob,
+      width: target.width,
+      height: target.height,
+      orientation,
+    });
   const canvas = await drawBlobToCanvas(blob, target.width, target.height);
-  return canvasBlob(canvas, "image/webp", 0.72);
+  const result = await canvasBlob(canvas, "image/webp", 0.68);
+  canvas.width = 1;
+  canvas.height = 1;
+  return result;
 }

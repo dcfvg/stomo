@@ -14,22 +14,22 @@ describe("choix de la caméra", () => {
     });
   });
 
-  it("explique pourquoi la caméra locale HTTP est indisponible", () => {
+  it("explique simplement quand l’adresse ne permet pas la caméra", () => {
     Object.defineProperty(window, "isSecureContext", {
       configurable: true,
       value: false,
     });
-    expect(cameraSecurityMessage()).toContain("HTTPS");
+    expect(cameraSecurityMessage()).toContain("version sécurisée");
   });
 
-  it("demande la caméra avant en Full HD par défaut", () => {
-    expect(preferredCameraConstraints("user", null)).toEqual({
+  it("demande la caméra arrière en Full HD par défaut", () => {
+    expect(preferredCameraConstraints("environment", null)).toEqual({
       audio: false,
       video: {
         width: { ideal: 1920 },
         height: { ideal: 1080 },
         aspectRatio: { ideal: 16 / 9 },
-        facingMode: { ideal: "user" },
+        facingMode: { ideal: "environment" },
       },
     });
   });

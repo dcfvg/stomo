@@ -2,16 +2,20 @@ import type {
   AutoPreviewLoops,
   ChildSessionRecord,
   FilmOrientation,
+  FrameMediaRecord,
   FrameRecord,
+  FrameSummary,
   ProjectRecord,
   SessionEvent,
 } from "../types";
 import { createId } from "../lib/ids";
+import { MAX_FRAMES } from "../config";
 
 const DATABASE_NAME = "stomo";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const PROJECTS = "projects";
 const FRAMES = "frames";
+const FRAME_MEDIA = "frame-media";
 const SETTINGS = "settings";
 const EVENTS = "session-events";
 const CHILD_SESSION_KEY = "child-session";
@@ -44,7 +48,7 @@ export function openDatabase() {
   if (databasePromise) return databasePromise;
   databasePromise = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const database = request.result;
       if (!database.objectStoreNames.contains(PROJECTS)) {
         const projects = database.createObjectStore(PROJECTS, {
@@ -58,12 +62,47 @@ export function openDatabase() {
           unique: true,
         });
       }
+      if (!database.objectStoreNames.contains(FRAME_MEDIA)) {
+        database.createObjectStore(FRAME_MEDIA, { keyPath: "frameId" });
+      }
       if (!database.objectStoreNames.contains(SETTINGS)) {
         database.createObjectStore(SETTINGS, { keyPath: "key" });
       }
       if (!database.objectStoreNames.contains(EVENTS)) {
         const events = database.createObjectStore(EVENTS, { keyPath: "id" });
         events.createIndex("occurredAt", "occurredAt");
+      }
+      if (event.oldVersion < 2 && database.objectStoreNames.contains(FRAMES)) {
+        const frameStore = request.transaction!.objectStore(FRAMES);
+        const mediaStore = request.transaction!.objectStore(FRAME_MEDIA);
+        const cursorRequest = frameStore.openCursor();
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) return;
+          const legacy = cursor.value as Partial<FrameRecord> & {
+            id: string;
+            projectId: string;
+            position: number;
+          };
+          if (legacy.image instanceof Blob && legacy.image.size > 0) {
+            mediaStore.put({ frameId: legacy.id, image: legacy.image });
+          }
+          const thumbnail =
+            legacy.thumbnail instanceof Blob && legacy.thumbnail.size > 0
+              ? legacy.thumbnail
+              : legacy.image instanceof Blob
+                ? legacy.image
+                : new Blob();
+          cursor.update({
+            id: legacy.id,
+            projectId: legacy.projectId,
+            position: legacy.position,
+            thumbnail,
+            width: typeof legacy.width === "number" ? legacy.width : null,
+            height: typeof legacy.height === "number" ? legacy.height : null,
+          } satisfies FrameSummary);
+          cursor.continue();
+        };
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -78,6 +117,7 @@ export function openDatabase() {
 
 const AUTO_PREVIEW_LOOPS = new Set([0, 1, 2, 3, 4]);
 const COUNTDOWNS = new Set([0, 1, 2, 3, 5]);
+const ONION_FRAME_COUNTS = new Set([1, 2, 3]);
 
 export function normalizeProjectRecord(project: ProjectRecord): ProjectRecord {
   const orientation: FilmOrientation =
@@ -88,18 +128,26 @@ export function normalizeProjectRecord(project: ProjectRecord): ProjectRecord {
         : "landscape";
   return {
     ...project,
+    name: project.name.trim().slice(0, 60) || "Mon nouveau film",
     countdownSeconds: COUNTDOWNS.has(project.countdownSeconds)
       ? project.countdownSeconds
       : 2,
-    autoPreviewFrames: 6,
+    onionFrameCount: ONION_FRAME_COUNTS.has(project.onionFrameCount)
+      ? project.onionFrameCount
+      : 2,
+    autoPreviewFrames:
+      Number.isInteger(project.autoPreviewFrames) &&
+      project.autoPreviewFrames >= 1 &&
+      project.autoPreviewFrames <= 12
+        ? project.autoPreviewFrames
+        : 6,
     autoPreviewLoops: AUTO_PREVIEW_LOOPS.has(project.autoPreviewLoops)
       ? (project.autoPreviewLoops as AutoPreviewLoops)
       : 2,
     width: orientation === "portrait" ? 1080 : 1920,
     height: orientation === "portrait" ? 1920 : 1080,
     gridEnabled: Boolean(project.gridEnabled),
-    cameraFacing:
-      project.cameraFacing === "environment" ? "environment" : "user",
+    cameraFacing: project.cameraFacing === "user" ? "user" : "environment",
     cameraDeviceId:
       typeof project.cameraDeviceId === "string"
         ? project.cameraDeviceId
@@ -115,19 +163,20 @@ export async function createProject(
   const now = Date.now();
   const project: ProjectRecord = {
     id: createId("project"),
-    name: name.trim() || "Mon nouveau film",
+    name: name.trim().slice(0, 60) || "Mon nouveau film",
     createdAt: now,
     updatedAt: now,
     fps: 8,
     countdownSeconds: 2,
     onionOpacity: 0.4,
+    onionFrameCount: 2,
     autoPreviewFrames: 6,
     autoPreviewLoops: 2,
     width: orientation === "portrait" ? 1080 : 1920,
     height: orientation === "portrait" ? 1920 : 1080,
     frameCount: 0,
     gridEnabled: false,
-    cameraFacing: "user",
+    cameraFacing: "environment",
     cameraDeviceId: null,
     orientation,
   };
@@ -167,16 +216,19 @@ export async function getProject(
 export async function saveProject(project: ProjectRecord) {
   const database = await openDatabase();
   const transaction = database.transaction(PROJECTS, "readwrite");
-  transaction
-    .objectStore(PROJECTS)
-    .put({ ...normalizeProjectRecord(project), updatedAt: Date.now() });
+  transaction.objectStore(PROJECTS).put(normalizeProjectRecord(project));
   await transactionFinished(transaction);
 }
 
 export async function renameProject(id: string, name: string) {
   const project = await getProject(id);
   if (!project) return;
-  await saveProject({ ...project, name: name.trim() || project.name });
+  const title = name.trim().slice(0, 60);
+  await saveProject({
+    ...project,
+    name: title || project.name,
+    updatedAt: Date.now(),
+  });
 }
 
 async function getFramesInTransaction(
@@ -188,22 +240,22 @@ async function getFramesInTransaction(
     [projectId, 0],
     [projectId, Number.MAX_SAFE_INTEGER],
   );
-  return requestResult(index.getAll(range) as IDBRequest<FrameRecord[]>);
+  return requestResult(index.getAll(range) as IDBRequest<FrameSummary[]>);
 }
 
-export async function listFrames(projectId: string): Promise<FrameRecord[]> {
+export async function listFrames(projectId: string): Promise<FrameSummary[]> {
   const database = await openDatabase();
   const transaction = database.transaction(FRAMES, "readonly");
   const frames = await getFramesInTransaction(transaction, projectId);
   await transactionFinished(transaction);
   return frames
     .sort((a, b) => a.position - b.position)
-    .map(normalizeFrameRecord);
+    .map(normalizeFrameSummary);
 }
 
 export async function getProjectPreviewFrame(
   projectId: string,
-): Promise<FrameRecord | undefined> {
+): Promise<FrameSummary | undefined> {
   const database = await openDatabase();
   const transaction = database.transaction(FRAMES, "readonly");
   const index = transaction.objectStore(FRAMES).index("by-project-position");
@@ -213,19 +265,53 @@ export async function getProjectPreviewFrame(
   );
   const cursor = await requestResult(index.openCursor(range, "prev"));
   await transactionFinished(transaction);
-  return cursor ? normalizeFrameRecord(cursor.value as FrameRecord) : undefined;
+  return cursor
+    ? normalizeFrameSummary(cursor.value as FrameSummary)
+    : undefined;
+}
+
+export function normalizeFrameSummary(frame: FrameSummary): FrameSummary {
+  const thumbnailIsValid =
+    frame.thumbnail instanceof Blob && frame.thumbnail.size > 0;
+  return {
+    ...frame,
+    thumbnail: thumbnailIsValid ? frame.thumbnail : new Blob(),
+    width: typeof frame.width === "number" ? frame.width : null,
+    height: typeof frame.height === "number" ? frame.height : null,
+    thumbnailNeedsRepair: !thumbnailIsValid,
+  };
 }
 
 export function normalizeFrameRecord(frame: FrameRecord): FrameRecord {
-  const imageIsValid = frame.image instanceof Blob && frame.image.size > 0;
-  if (!imageIsValid) return frame;
   const thumbnailIsValid =
     frame.thumbnail instanceof Blob && frame.thumbnail.size > 0;
   return {
     ...frame,
     thumbnail: thumbnailIsValid ? frame.thumbnail : frame.image,
+    width: typeof frame.width === "number" ? frame.width : null,
+    height: typeof frame.height === "number" ? frame.height : null,
     thumbnailNeedsRepair: !thumbnailIsValid,
   };
+}
+
+export async function getFrameImage(frameId: string): Promise<Blob> {
+  const database = await openDatabase();
+  const transaction = database.transaction(FRAME_MEDIA, "readonly");
+  const record = await requestResult(
+    transaction.objectStore(FRAME_MEDIA).get(frameId) as IDBRequest<
+      FrameMediaRecord | undefined
+    >,
+  );
+  await transactionFinished(transaction);
+  if (!record || !("image" in record))
+    throw new Error("Cette photo est introuvable.");
+  return record.image as Blob;
+}
+
+export async function getFrameRecord(
+  frame: FrameSummary,
+): Promise<FrameRecord> {
+  return { ...frame, image: await getFrameImage(frame.id) };
 }
 
 export async function updateFrameThumbnail(frameId: string, thumbnail: Blob) {
@@ -233,7 +319,7 @@ export async function updateFrameThumbnail(frameId: string, thumbnail: Blob) {
   const transaction = database.transaction(FRAMES, "readwrite");
   const store = transaction.objectStore(FRAMES);
   const frame = await requestResult(
-    store.get(frameId) as IDBRequest<FrameRecord | undefined>,
+    store.get(frameId) as IDBRequest<FrameSummary | undefined>,
   );
   if (frame) store.put({ ...frame, thumbnail });
   await transactionFinished(transaction);
@@ -243,9 +329,14 @@ export async function addFrame(
   projectId: string,
   image: Blob,
   thumbnail: Blob,
+  width: number | null = null,
+  height: number | null = null,
 ) {
   const database = await openDatabase();
-  const transaction = database.transaction([PROJECTS, FRAMES], "readwrite");
+  const transaction = database.transaction(
+    [PROJECTS, FRAMES, FRAME_MEDIA],
+    "readwrite",
+  );
   const projectStore = transaction.objectStore(PROJECTS);
   const frameStore = transaction.objectStore(FRAMES);
   const project = await requestResult(
@@ -255,18 +346,20 @@ export async function addFrame(
     transaction.abort();
     throw new Error("Ce film n’existe plus.");
   }
-  if (project.frameCount >= 240) {
+  if (project.frameCount >= MAX_FRAMES) {
     transaction.abort();
-    throw new Error("Ton film a atteint 240 photos.");
+    throw new Error(`Ton film a atteint ${MAX_FRAMES} photos.`);
   }
-  const frame: FrameRecord = {
+  const frame: FrameSummary = {
     id: createId("frame"),
     projectId,
     position: project.frameCount,
-    image,
     thumbnail,
+    width,
+    height,
   };
   frameStore.add(frame);
+  transaction.objectStore(FRAME_MEDIA).add({ frameId: frame.id, image });
   projectStore.put({
     ...project,
     frameCount: project.frameCount + 1,
@@ -276,7 +369,7 @@ export async function addFrame(
   return frame;
 }
 
-async function rewriteFrames(projectId: string, frames: FrameRecord[]) {
+async function rewriteFrames(projectId: string, frames: FrameSummary[]) {
   const database = await openDatabase();
   const transaction = database.transaction([PROJECTS, FRAMES], "readwrite");
   const frameStore = transaction.objectStore(FRAMES);
@@ -300,6 +393,10 @@ async function rewriteFrames(projectId: string, frames: FrameRecord[]) {
 
 export async function deleteFrame(projectId: string, frameId: string) {
   const frames = await listFrames(projectId);
+  const database = await openDatabase();
+  const mediaTransaction = database.transaction(FRAME_MEDIA, "readwrite");
+  mediaTransaction.objectStore(FRAME_MEDIA).delete(frameId);
+  await transactionFinished(mediaTransaction);
   await rewriteFrames(
     projectId,
     frames.filter((frame) => frame.id !== frameId),
@@ -308,11 +405,19 @@ export async function deleteFrame(projectId: string, frameId: string) {
 
 export async function duplicateFrame(projectId: string, frameId: string) {
   const frames = await listFrames(projectId);
-  if (frames.length >= 240) throw new Error("Ton film a atteint 240 photos.");
+  if (frames.length >= MAX_FRAMES)
+    throw new Error(`Ton film a atteint ${MAX_FRAMES} photos.`);
   const index = frames.findIndex((frame) => frame.id === frameId);
   if (index < 0) return;
   const source = frames[index];
-  const copy: FrameRecord = { ...source, id: createId("frame") };
+  const copy: FrameSummary = { ...source, id: createId("frame") };
+  const image = await getFrameImage(source.id);
+  const database = await openDatabase();
+  const mediaTransaction = database.transaction(FRAME_MEDIA, "readwrite");
+  mediaTransaction
+    .objectStore(FRAME_MEDIA)
+    .add({ frameId: copy.id, image } satisfies FrameMediaRecord);
+  await transactionFinished(mediaTransaction);
   frames.splice(index + 1, 0, copy);
   await rewriteFrames(projectId, frames);
 }
@@ -332,7 +437,10 @@ export async function moveFrame(
 
 export async function deleteProject(id: string) {
   const database = await openDatabase();
-  const transaction = database.transaction([PROJECTS, FRAMES], "readwrite");
+  const transaction = database.transaction(
+    [PROJECTS, FRAMES, FRAME_MEDIA],
+    "readwrite",
+  );
   transaction.objectStore(PROJECTS).delete(id);
   const frameStore = transaction.objectStore(FRAMES);
   const index = frameStore.index("by-project-position");
@@ -341,6 +449,7 @@ export async function deleteProject(id: string) {
   cursorRequest.onsuccess = () => {
     const cursor = cursorRequest.result;
     if (!cursor) return;
+    transaction.objectStore(FRAME_MEDIA).delete(cursor.primaryKey as string);
     cursor.delete();
     cursor.continue();
   };

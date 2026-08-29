@@ -7,6 +7,7 @@ import { SessionUi } from "./components/SessionUi";
 import { Studio } from "./components/Studio";
 import { useChildSession } from "./session/useChildSession";
 import { useStomoStore } from "./state/useStomoStore";
+import { cleanupStaleExportFiles } from "./media/exportSink";
 
 export default function App() {
   const { project, loading, initialize } = useStomoStore();
@@ -17,9 +18,25 @@ export default function App() {
   }, [initialize]);
 
   useEffect(() => {
+    void cleanupStaleExportFiles();
+  }, []);
+
+  useEffect(() => {
+    const persist = () => {
+      if (navigator.storage?.persist)
+        void navigator.storage.persist().catch(() => undefined);
+    };
+    persist();
+    window.addEventListener("appinstalled", persist);
+    return () => window.removeEventListener("appinstalled", persist);
+  }, []);
+
+  useEffect(() => {
     const updateAppHeight = () => {
       const height = window.visualViewport?.height ?? window.innerHeight;
+      const top = window.visualViewport?.offsetTop ?? 0;
       document.documentElement.style.setProperty("--app-height", `${height}px`);
+      document.documentElement.style.setProperty("--viewport-top", `${top}px`);
     };
     updateAppHeight();
     window.addEventListener("resize", updateAppHeight);

@@ -11,12 +11,14 @@ import {
   addFrame,
   createProject,
   deleteProject,
+  getFrameImage,
   getProject,
   listFrames,
   saveProject,
 } from "../storage/database";
 import type {
   FrameRecord,
+  FrameSummary,
   ProjectRecord,
   StomoManifest,
   StomoManifestV2,
@@ -27,6 +29,16 @@ import {
   normalizeImageToWebp,
 } from "./images";
 import { framesToWebm } from "./webm";
+import { createExportFileSink } from "./exportSink";
+import { MAX_FRAMES } from "../config";
+
+type ExportFrame = FrameSummary | FrameRecord;
+
+function imageForFrame(frame: ExportFrame) {
+  return "image" in frame && frame.image instanceof Blob
+    ? Promise.resolve(frame.image)
+    : getFrameImage(frame.id);
+}
 
 export function safeFileName(name: string) {
   const cleaned = name
@@ -53,10 +65,10 @@ export function downloadBlob(blob: Blob, fileName: string) {
 
 export async function exportSelectedPhoto(
   project: ProjectRecord,
-  frame: FrameRecord,
+  frame: ExportFrame,
 ) {
   const jpeg = await imageBlobToJpeg(
-    frame.image,
+    await imageForFrame(frame),
     project.width,
     project.height,
   );
@@ -78,7 +90,7 @@ function projectInformation(project: ProjectRecord, frameCount: number) {
 
 export async function buildPhotosZip(
   project: ProjectRecord,
-  frames: FrameRecord[],
+  frames: ExportFrame[],
   onProgress: (current: number, total: number) => void,
 ) {
   if (!frames.length)
@@ -89,7 +101,7 @@ export async function buildPhotosZip(
     for (let index = 0; index < frames.length; index += 1) {
       onProgress(index + 1, frames.length);
       const jpeg = await imageBlobToJpeg(
-        frames[index].image,
+        await imageForFrame(frames[index]),
         project.width,
         project.height,
       );
@@ -113,16 +125,50 @@ export async function buildPhotosZip(
 
 export async function exportPhotosZip(
   project: ProjectRecord,
-  frames: FrameRecord[],
+  frames: ExportFrame[],
   onProgress: (current: number, total: number) => void,
 ) {
-  const archive = await buildPhotosZip(project, frames, onProgress);
-  downloadBlob(archive, `${safeFileName(project.name)}_photos.zip`);
+  const fileName = `${safeFileName(project.name)}_photos.zip`;
+  const sink = await createExportFileSink(fileName).catch(() => null);
+  if (!sink) {
+    const archive = await buildPhotosZip(project, frames, onProgress);
+    downloadBlob(archive, fileName);
+    return;
+  }
+  const root = `${safeFileName(project.name)}_photos`;
+  const writer = new ZipWriter(sink.writable);
+  try {
+    for (let index = 0; index < frames.length; index += 1) {
+      onProgress(index + 1, frames.length);
+      const jpeg = await imageBlobToJpeg(
+        await imageForFrame(frames[index]),
+        project.width,
+        project.height,
+      );
+      await writer.add(
+        `${root}/${String(index + 1).padStart(4, "0")}.jpg`,
+        new BlobReader(jpeg),
+        { level: 0 },
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    await writer.add(
+      `${root}/informations.txt`,
+      new TextReader(projectInformation(project, frames.length)),
+    );
+    await writer.close();
+    downloadBlob(await sink.finish(), fileName);
+    window.setTimeout(() => void sink.discard(), 60_000);
+  } catch (error) {
+    await writer.close().catch(() => undefined);
+    await sink.discard();
+    throw error;
+  }
 }
 
 export async function exportVideo(
   project: ProjectRecord,
-  frames: FrameRecord[],
+  frames: ExportFrame[],
   onProgress: (current: number, total: number) => void,
 ) {
   const video = await framesToWebm(
@@ -131,14 +177,34 @@ export async function exportVideo(
     project.width,
     project.height,
     onProgress,
-    (frame) => normalizeImageToWebp(frame.image, project.width, project.height),
+    async (frame) => {
+      const source = await imageForFrame(frame);
+      return frame.width === project.width && frame.height === project.height
+        ? source
+        : normalizeImageToWebp(source, project.width, project.height);
+    },
   );
-  downloadBlob(video, `${safeFileName(project.name)}.webm`);
+  const fileName = `${safeFileName(project.name)}.webm`;
+  const sink = await createExportFileSink(fileName).catch(() => null);
+  if (!sink) {
+    downloadBlob(video, fileName);
+    return;
+  }
+  try {
+    const writable = sink.writable.getWriter();
+    await writable.write(video);
+    await writable.close();
+    downloadBlob(await sink.finish(), fileName);
+    window.setTimeout(() => void sink.discard(), 60_000);
+  } catch (error) {
+    await sink.discard();
+    throw error;
+  }
 }
 
 export async function buildProjectArchive(
   project: ProjectRecord,
-  frames: FrameRecord[],
+  frames: ExportFrame[],
   onProgress: (current: number, total: number) => void,
 ) {
   if (frames.length !== project.frameCount)
@@ -160,6 +226,7 @@ export async function buildProjectArchive(
       fps: project.fps,
       countdownSeconds: project.countdownSeconds,
       onionOpacity: project.onionOpacity,
+      onionFrameCount: project.onionFrameCount,
       autoPreviewFrames: project.autoPreviewFrames,
       autoPreviewLoops: project.autoPreviewLoops,
       width: project.width,
@@ -181,10 +248,8 @@ export async function buildProjectArchive(
       new TextReader(JSON.stringify(manifest, null, 2)),
     );
     for (let index = 0; index < frames.length; index += 1) {
-      if (
-        !(frames[index].image instanceof Blob) ||
-        frames[index].image.size === 0
-      )
+      const image = await imageForFrame(frames[index]);
+      if (!(image instanceof Blob) || image.size === 0)
         throw new Error(
           `La photo ${index + 1} est vide. La sauvegarde est arrêtée.`,
         );
@@ -194,8 +259,8 @@ export async function buildProjectArchive(
         frames[index].thumbnail.size > 0 &&
         !frames[index].thumbnailNeedsRepair
           ? frames[index].thumbnail
-          : await createThumbnail(frames[index].image, project.orientation);
-      await writer.add(imageFiles[index], new BlobReader(frames[index].image), {
+          : await createThumbnail(image, project.orientation);
+      await writer.add(imageFiles[index], new BlobReader(image), {
         level: 0,
       });
       await writer.add(thumbnailFiles[index], new BlobReader(thumbnail), {
@@ -212,11 +277,81 @@ export async function buildProjectArchive(
 
 export async function exportProject(
   project: ProjectRecord,
-  frames: FrameRecord[],
+  frames: ExportFrame[],
   onProgress: (current: number, total: number) => void,
 ) {
-  const archive = await buildProjectArchive(project, frames, onProgress);
-  downloadBlob(archive, `${safeFileName(project.name)}.stomo`);
+  const fileName = `${safeFileName(project.name)}.stomo`;
+  const sink = await createExportFileSink(fileName).catch(() => null);
+  if (!sink) {
+    const archive = await buildProjectArchive(project, frames, onProgress);
+    downloadBlob(archive, fileName);
+    return;
+  }
+  if (frames.length !== project.frameCount)
+    throw new Error(
+      "Une photo déclarée manque dans le projet. La sauvegarde est arrêtée.",
+    );
+  const writer = new ZipWriter(sink.writable);
+  const imageFiles = frames.map(
+    (_, index) => `images/${String(index + 1).padStart(4, "0")}.webp`,
+  );
+  const thumbnailFiles = frames.map(
+    (_, index) => `vignettes/${String(index + 1).padStart(4, "0")}.webp`,
+  );
+  const manifest: StomoManifestV2 = {
+    format: "stomo-project",
+    version: 2,
+    project: {
+      name: project.name,
+      fps: project.fps,
+      countdownSeconds: project.countdownSeconds,
+      onionOpacity: project.onionOpacity,
+      onionFrameCount: project.onionFrameCount,
+      autoPreviewFrames: project.autoPreviewFrames,
+      autoPreviewLoops: project.autoPreviewLoops,
+      width: project.width,
+      height: project.height,
+      gridEnabled: project.gridEnabled,
+      cameraFacing: project.cameraFacing,
+      cameraDeviceId: project.cameraDeviceId,
+      orientation: project.orientation,
+    },
+    frames: imageFiles.map((imageFile, position) => ({
+      imageFile,
+      thumbnailFile: thumbnailFiles[position],
+      position,
+    })),
+  };
+  try {
+    await writer.add(
+      "projet.json",
+      new TextReader(JSON.stringify(manifest, null, 2)),
+    );
+    for (let index = 0; index < frames.length; index += 1) {
+      const image = await imageForFrame(frames[index]);
+      if (!image.size)
+        throw new Error(
+          `La photo ${index + 1} est vide. La sauvegarde est arrêtée.`,
+        );
+      const thumbnail =
+        frames[index].thumbnail.size > 0 && !frames[index].thumbnailNeedsRepair
+          ? frames[index].thumbnail
+          : await createThumbnail(image, project.orientation);
+      await writer.add(imageFiles[index], new BlobReader(image), { level: 0 });
+      await writer.add(thumbnailFiles[index], new BlobReader(thumbnail), {
+        level: 0,
+      });
+      onProgress(index + 1, frames.length);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    await writer.close();
+    downloadBlob(await sink.finish(), fileName);
+    window.setTimeout(() => void sink.discard(), 60_000);
+  } catch (error) {
+    await writer.close().catch(() => undefined);
+    await sink.discard();
+    throw error;
+  }
 }
 
 function isManifest(value: unknown): value is StomoManifest {
@@ -246,24 +381,22 @@ export async function importProject(
     const manifest: unknown = JSON.parse(manifestText);
     if (!isManifest(manifest))
       throw new Error("Cette sauvegarde Stomo n’est pas reconnue.");
-    if (manifest.frames.length > 240)
-      throw new Error("Ce projet contient plus de 240 photos.");
+    if (manifest.frames.length > MAX_FRAMES)
+      throw new Error(`Ce projet contient plus de ${MAX_FRAMES} photos.`);
 
     const orientation =
       manifest.project.orientation ??
       (manifest.project.height > manifest.project.width
         ? "portrait"
         : "landscape");
-    const created = await createProject(
-      `${manifest.project.name} (importé)`,
-      orientation,
-    );
+    const importedName = `${manifest.project.name.trim().slice(0, 50)} (importé)`;
+    const created = await createProject(importedName, orientation);
     createdId = created.id;
     await saveProject({
       ...created,
       ...manifest.project,
       id: created.id,
-      name: `${manifest.project.name} (importé)`,
+      name: importedName,
       createdAt: created.createdAt,
       updatedAt: Date.now(),
       frameCount: 0,
@@ -304,7 +437,13 @@ export async function importProject(
         }
       }
       thumbnail ??= await createThumbnail(image, orientation);
-      await addFrame(created.id, image, thumbnail);
+      await addFrame(
+        created.id,
+        image,
+        thumbnail,
+        manifest.project.width,
+        manifest.project.height,
+      );
       onProgress(index + 1, manifest.frames.length);
     }
     const project = await getProject(created.id);

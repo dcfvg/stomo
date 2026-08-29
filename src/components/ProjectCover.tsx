@@ -1,8 +1,8 @@
 import { RiFolderVideoLine } from "@remixicon/react";
 import { useEffect, useState } from "react";
 import { getProjectPreviewFrame } from "../storage/database";
-import type { FrameRecord, ProjectRecord } from "../types";
-import { BlobImage } from "./BlobImage";
+import type { FrameSummary, ProjectRecord } from "../types";
+import { FrameThumbnail } from "./FrameThumbnail";
 
 interface ProjectCoverProps {
   project: ProjectRecord;
@@ -10,7 +10,7 @@ interface ProjectCoverProps {
 }
 
 export function ProjectCover({ project, color }: ProjectCoverProps) {
-  const [frame, setFrame] = useState<FrameRecord | null>(null);
+  const [frame, setFrame] = useState<FrameSummary | null>(null);
 
   useEffect(() => {
     if (project.frameCount === 0) return;
@@ -30,10 +30,9 @@ export function ProjectCover({ project, color }: ProjectCoverProps) {
   return (
     <div className={`project-cover project-cover--${color}`}>
       {frame ? (
-        <BlobImage
+        <FrameThumbnail
           className="project-cover__image"
-          blob={frame.thumbnail}
-          fallbackBlob={frame.image}
+          frame={frame}
           alt={`Aperçu du film ${project.name}`}
           loading="lazy"
         />

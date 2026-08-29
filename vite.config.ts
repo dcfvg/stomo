@@ -25,7 +25,7 @@ export default defineConfig({
       manifest: {
         name: "Stomo — mon studio d’animation",
         short_name: "Stomo",
-        description: "Crée des films image par image, même sans internet.",
+        description: "Crée des films image par image sur ton téléphone.",
         lang: "fr",
         start_url: ".",
         scope: ".",
@@ -63,13 +63,19 @@ export default defineConfig({
   ],
   server: {
     host: "0.0.0.0",
-    port: 4174,
+    port: 4175,
+    strictPort: true,
     https: httpsRequested
       ? {
           cert: readFileSync(certificateFile),
           key: readFileSync(certificateKeyFile),
         }
       : undefined,
+  },
+  preview: {
+    host: "0.0.0.0",
+    port: 4175,
+    strictPort: true,
   },
   build: { target: "chrome101" },
   test: {

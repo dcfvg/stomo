@@ -33,4 +33,65 @@ describe("vidéo WebM", () => {
     expect(video.type).toBe("video/webm");
     expect(progress).toEqual([1, 2, 3]);
   });
+
+  it("ajoute exactement deux secondes de titre sans le retraiter", async () => {
+    const image = webpWithVp8(
+      new Uint8Array([0x9d, 0x01, 0x2a, 0x00, 0x05, 0xd0, 0x02]),
+    );
+    const frames: FrameRecord[] = [0, 1].map((position) => ({
+      id: `f${position}`,
+      projectId: "p",
+      position,
+      image,
+      thumbnail: image,
+    }));
+    const prepared: string[] = [];
+    const video = await framesToWebm(
+      frames,
+      8,
+      1920,
+      1080,
+      undefined,
+      async (frame) => {
+        prepared.push(frame.id);
+        return frame.image;
+      },
+      { leadIn: { image, durationMs: 2_000 } },
+    );
+
+    expect(prepared).toEqual(["f0", "f1"]);
+    const content = new Uint8Array(await video.arrayBuffer());
+    const blockCount = content.filter((value) => value === 0xa3).length;
+    expect(blockCount).toBeGreaterThanOrEqual(18);
+  });
+
+  it("interrompt la préparation sans lire les photos suivantes", async () => {
+    const image = webpWithVp8(new Uint8Array([1, 2, 3]));
+    const controller = new AbortController();
+    const frames: FrameRecord[] = [0, 1].map((position) => ({
+      id: `f${position}`,
+      projectId: "p",
+      position,
+      image,
+      thumbnail: image,
+    }));
+    let prepared = 0;
+
+    await expect(
+      framesToWebm(
+        frames,
+        8,
+        1920,
+        1080,
+        undefined,
+        async () => {
+          prepared += 1;
+          controller.abort();
+          return image;
+        },
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(prepared).toBe(1);
+  });
 });

@@ -1,5 +1,4 @@
 import type {
-  AutoPreviewLoops,
   ChildSessionRecord,
   FilmOrientation,
   FrameMediaRecord,
@@ -115,7 +114,6 @@ export function openDatabase() {
   return databasePromise;
 }
 
-const AUTO_PREVIEW_LOOPS = new Set([0, 1, 2, 3, 4]);
 const COUNTDOWNS = new Set([0, 1, 2, 3, 5]);
 const ONION_FRAME_COUNTS = new Set([1, 2, 3]);
 
@@ -135,15 +133,8 @@ export function normalizeProjectRecord(project: ProjectRecord): ProjectRecord {
     onionFrameCount: ONION_FRAME_COUNTS.has(project.onionFrameCount)
       ? project.onionFrameCount
       : 2,
-    autoPreviewFrames:
-      Number.isInteger(project.autoPreviewFrames) &&
-      project.autoPreviewFrames >= 1 &&
-      project.autoPreviewFrames <= 12
-        ? project.autoPreviewFrames
-        : 6,
-    autoPreviewLoops: AUTO_PREVIEW_LOOPS.has(project.autoPreviewLoops)
-      ? (project.autoPreviewLoops as AutoPreviewLoops)
-      : 2,
+    autoPreviewFrames: 4,
+    autoPreviewLoops: project.autoPreviewLoops === 0 ? 0 : 1,
     width: orientation === "portrait" ? 1080 : 1920,
     height: orientation === "portrait" ? 1920 : 1080,
     gridEnabled: Boolean(project.gridEnabled),
@@ -170,8 +161,8 @@ export async function createProject(
     countdownSeconds: 2,
     onionOpacity: 0.4,
     onionFrameCount: 2,
-    autoPreviewFrames: 6,
-    autoPreviewLoops: 2,
+    autoPreviewFrames: 4,
+    autoPreviewLoops: 1,
     width: orientation === "portrait" ? 1080 : 1920,
     height: orientation === "portrait" ? 1920 : 1080,
     frameCount: 0,

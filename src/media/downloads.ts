@@ -31,8 +31,19 @@ import {
 import { framesToWebm } from "./webm";
 import { createExportFileSink } from "./exportSink";
 import { MAX_FRAMES } from "../config";
+import { renderTitleCard } from "./titleCard";
 
 type ExportFrame = FrameSummary | FrameRecord;
+export type ExportUpdate = (
+  current: number,
+  total: number,
+  label?: string,
+) => void;
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted)
+    throw new DOMException("La préparation a été arrêtée.", "AbortError");
+}
 
 function imageForFrame(frame: ExportFrame) {
   return "image" in frame && frame.image instanceof Blob
@@ -91,7 +102,8 @@ function projectInformation(project: ProjectRecord, frameCount: number) {
 export async function buildPhotosZip(
   project: ProjectRecord,
   frames: ExportFrame[],
-  onProgress: (current: number, total: number) => void,
+  onProgress: ExportUpdate,
+  signal?: AbortSignal,
 ) {
   if (!frames.length)
     throw new Error("Prends au moins une photo avant de les enregistrer.");
@@ -99,6 +111,7 @@ export async function buildPhotosZip(
   const writer = new ZipWriter(new BlobWriter("application/zip"));
   try {
     for (let index = 0; index < frames.length; index += 1) {
+      throwIfAborted(signal);
       onProgress(index + 1, frames.length);
       const jpeg = await imageBlobToJpeg(
         await imageForFrame(frames[index]),
@@ -110,6 +123,7 @@ export async function buildPhotosZip(
         new BlobReader(jpeg),
         { level: 0 },
       );
+      throwIfAborted(signal);
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
     await writer.add(
@@ -126,12 +140,14 @@ export async function buildPhotosZip(
 export async function exportPhotosZip(
   project: ProjectRecord,
   frames: ExportFrame[],
-  onProgress: (current: number, total: number) => void,
+  onProgress: ExportUpdate,
+  signal?: AbortSignal,
 ) {
   const fileName = `${safeFileName(project.name)}_photos.zip`;
   const sink = await createExportFileSink(fileName).catch(() => null);
   if (!sink) {
-    const archive = await buildPhotosZip(project, frames, onProgress);
+    const archive = await buildPhotosZip(project, frames, onProgress, signal);
+    throwIfAborted(signal);
     downloadBlob(archive, fileName);
     return;
   }
@@ -139,6 +155,7 @@ export async function exportPhotosZip(
   const writer = new ZipWriter(sink.writable);
   try {
     for (let index = 0; index < frames.length; index += 1) {
+      throwIfAborted(signal);
       onProgress(index + 1, frames.length);
       const jpeg = await imageBlobToJpeg(
         await imageForFrame(frames[index]),
@@ -150,6 +167,7 @@ export async function exportPhotosZip(
         new BlobReader(jpeg),
         { level: 0 },
       );
+      throwIfAborted(signal);
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
     await writer.add(
@@ -157,6 +175,7 @@ export async function exportPhotosZip(
       new TextReader(projectInformation(project, frames.length)),
     );
     await writer.close();
+    throwIfAborted(signal);
     downloadBlob(await sink.finish(), fileName);
     window.setTimeout(() => void sink.discard(), 60_000);
   } catch (error) {
@@ -169,21 +188,33 @@ export async function exportPhotosZip(
 export async function exportVideo(
   project: ProjectRecord,
   frames: ExportFrame[],
-  onProgress: (current: number, total: number) => void,
+  onProgress: ExportUpdate,
+  signal?: AbortSignal,
 ) {
+  throwIfAborted(signal);
+  onProgress(0, frames.length, "J’ajoute le titre");
+  const title = await renderTitleCard(
+    project.name,
+    project.width,
+    project.height,
+  );
+  throwIfAborted(signal);
   const video = await framesToWebm(
     frames,
     project.fps,
     project.width,
     project.height,
-    onProgress,
+    (current, total) =>
+      onProgress(current, total, `Je prépare la photo ${current} sur ${total}`),
     async (frame) => {
       const source = await imageForFrame(frame);
       return frame.width === project.width && frame.height === project.height
         ? source
         : normalizeImageToWebp(source, project.width, project.height);
     },
+    { leadIn: { image: title, durationMs: 2_000 }, signal },
   );
+  throwIfAborted(signal);
   const fileName = `${safeFileName(project.name)}.webm`;
   const sink = await createExportFileSink(fileName).catch(() => null);
   if (!sink) {
@@ -205,7 +236,8 @@ export async function exportVideo(
 export async function buildProjectArchive(
   project: ProjectRecord,
   frames: ExportFrame[],
-  onProgress: (current: number, total: number) => void,
+  onProgress: ExportUpdate,
+  signal?: AbortSignal,
 ) {
   if (frames.length !== project.frameCount)
     throw new Error(
@@ -248,6 +280,7 @@ export async function buildProjectArchive(
       new TextReader(JSON.stringify(manifest, null, 2)),
     );
     for (let index = 0; index < frames.length; index += 1) {
+      throwIfAborted(signal);
       const image = await imageForFrame(frames[index]);
       if (!(image instanceof Blob) || image.size === 0)
         throw new Error(
@@ -266,6 +299,7 @@ export async function buildProjectArchive(
       await writer.add(thumbnailFiles[index], new BlobReader(thumbnail), {
         level: 0,
       });
+      throwIfAborted(signal);
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
     return await writer.close();
@@ -278,12 +312,19 @@ export async function buildProjectArchive(
 export async function exportProject(
   project: ProjectRecord,
   frames: ExportFrame[],
-  onProgress: (current: number, total: number) => void,
+  onProgress: ExportUpdate,
+  signal?: AbortSignal,
 ) {
   const fileName = `${safeFileName(project.name)}.stomo`;
   const sink = await createExportFileSink(fileName).catch(() => null);
   if (!sink) {
-    const archive = await buildProjectArchive(project, frames, onProgress);
+    const archive = await buildProjectArchive(
+      project,
+      frames,
+      onProgress,
+      signal,
+    );
+    throwIfAborted(signal);
     downloadBlob(archive, fileName);
     return;
   }
@@ -328,6 +369,7 @@ export async function exportProject(
       new TextReader(JSON.stringify(manifest, null, 2)),
     );
     for (let index = 0; index < frames.length; index += 1) {
+      throwIfAborted(signal);
       const image = await imageForFrame(frames[index]);
       if (!image.size)
         throw new Error(
@@ -341,10 +383,12 @@ export async function exportProject(
       await writer.add(thumbnailFiles[index], new BlobReader(thumbnail), {
         level: 0,
       });
+      throwIfAborted(signal);
       onProgress(index + 1, frames.length);
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
     await writer.close();
+    throwIfAborted(signal);
     downloadBlob(await sink.finish(), fileName);
     window.setTimeout(() => void sink.discard(), 60_000);
   } catch (error) {

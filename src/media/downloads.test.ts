@@ -18,14 +18,25 @@ vi.mock("./images", () => ({
   ),
   normalizeImageToWebp: vi.fn(async (blob: Blob) => blob),
 }));
+vi.mock("./titleCard", () => ({
+  renderTitleCard: vi.fn(
+    async () => new Blob(["title"], { type: "image/webp" }),
+  ),
+}));
+vi.mock("./webm", () => ({
+  framesToWebm: vi.fn(async () => new Blob(["video"], { type: "video/webm" })),
+}));
 
 import {
   buildPhotosZip,
   buildProjectArchive,
+  exportVideo,
   importProject,
   safeFileName,
 } from "./downloads";
 import { createThumbnail, imageBlobToJpeg } from "./images";
+import { renderTitleCard } from "./titleCard";
+import { framesToWebm } from "./webm";
 
 const project: ProjectRecord = {
   id: "project-export",
@@ -36,8 +47,8 @@ const project: ProjectRecord = {
   countdownSeconds: 3,
   onionOpacity: 0.4,
   onionFrameCount: 2,
-  autoPreviewFrames: 8,
-  autoPreviewLoops: 2,
+  autoPreviewFrames: 4,
+  autoPreviewLoops: 1,
   width: 1920,
   height: 1080,
   frameCount: 0,
@@ -206,5 +217,36 @@ describe("téléchargements", () => {
       "frame-2",
     ]);
     expect(source.every((frame) => frame.image.size > 0)).toBe(true);
+  });
+
+  it("ajoute le titre une fois à la vidéo avant les photos", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:video");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+      () => undefined,
+    );
+    const update = vi.fn();
+    await exportVideo({ ...project, frameCount: 2 }, frames(2), update);
+
+    expect(renderTitleCard).toHaveBeenCalledWith(project.name, 1920, 1080);
+    expect(update).toHaveBeenCalledWith(0, 2, "J’ajoute le titre");
+    expect(framesToWebm).toHaveBeenCalledOnce();
+    expect(vi.mocked(framesToWebm).mock.calls[0][6]).toMatchObject({
+      leadIn: { durationMs: 2_000 },
+    });
+  });
+
+  it("arrête un ZIP avant de convertir la photo suivante", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      buildPhotosZip(
+        { ...project, frameCount: 3 },
+        frames(3),
+        () => undefined,
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(imageBlobToJpeg).not.toHaveBeenCalled();
   });
 });

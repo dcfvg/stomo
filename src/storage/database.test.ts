@@ -64,8 +64,8 @@ describe("montage stocké dans le navigateur", () => {
       height: 1080,
       countdownSeconds: 2,
       cameraFacing: "environment",
-      autoPreviewFrames: 6,
-      autoPreviewLoops: 2,
+      autoPreviewFrames: 4,
+      autoPreviewLoops: 1,
       onionFrameCount: 2,
     });
     expect(await getProject(portrait.id)).toMatchObject({
@@ -114,6 +114,37 @@ describe("montage stocké dans le navigateur", () => {
         orientation: "landscape",
       } as unknown as ProjectRecord),
     ).toMatchObject({ onionFrameCount: 2, width: 1920, height: 1080 });
+  });
+
+  it.each([
+    [0, 0],
+    [1, 1],
+    [2, 1],
+    [3, 1],
+    [4, 1],
+  ])("migre %i passage(s) vers l’aperçu activé ou coupé", (loops, expected) => {
+    const project = normalizeProjectRecord({
+      id: `ancien-${loops}`,
+      name: "Ancien",
+      createdAt: 1,
+      updatedAt: 1,
+      fps: 8,
+      countdownSeconds: 2,
+      onionOpacity: 0.4,
+      onionFrameCount: 2,
+      autoPreviewFrames: 8,
+      autoPreviewLoops: loops,
+      width: 1280,
+      height: 720,
+      frameCount: 0,
+      gridEnabled: false,
+      cameraFacing: "environment",
+      cameraDeviceId: null,
+      orientation: "landscape",
+    } as ProjectRecord);
+
+    expect(project.autoPreviewFrames).toBe(4);
+    expect(project.autoPreviewLoops).toBe(expected);
   });
 
   it("utilise l’original immédiatement quand une vignette manque", async () => {

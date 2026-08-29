@@ -1,7 +1,9 @@
 import {
   RiArrowGoBackLine,
+  RiArrowDownSLine,
   RiArrowLeftLine,
   RiArrowRightLine,
+  RiArrowUpSLine,
   RiCameraFill,
   RiCameraSwitchLine,
   RiContrast2Line,
@@ -18,8 +20,6 @@ import {
   RiImageDownloadLine,
   RiLandscapeLine,
   RiListCheck2,
-  RiSkipLeftLine,
-  RiSkipRightLine,
   RiPlayFill,
   RiCloseLine,
   RiSettings3Line,
@@ -35,20 +35,23 @@ import {
   exportProject,
   exportSelectedPhoto,
   exportVideo,
+  type ExportUpdate,
 } from "../media/downloads";
 import { cameraSecurityMessage, requestCameraStream } from "../media/camera";
 import { captureVideoFrame, FULL_HD } from "../media/images";
 import { useHeadsetRemote } from "../media/useHeadsetRemote";
 import { buildOnionLayers } from "../media/onion";
 import { playFramesInLoop } from "../media/playback";
+import { renderTitleCard } from "../media/titleCard";
 import { useStomoStore } from "../state/useStomoStore";
-import { FRAME_WARNING, MAX_FRAMES, MAX_TIMELINE_THUMBNAILS } from "../config";
+import { FRAME_WARNING, MAX_FRAMES } from "../config";
 import { getFrameImage } from "../storage/database";
 import type {
   AutoPreviewLoops,
   CountdownSeconds,
   ExportProgress,
   FilmOrientation,
+  FrameRecord,
   FrameRate,
   FrameSummary,
   OnionFrameCount,
@@ -56,7 +59,7 @@ import type {
 import { Dialog } from "./Dialog";
 import { SmoothPlayback, type SmoothPlaybackHandle } from "./SmoothPlayback";
 import { StoredFrameImage } from "./StoredFrameImage";
-import { FrameThumbnail } from "./FrameThumbnail";
+import { VirtualTimeline } from "./VirtualTimeline";
 
 type StudioActivity =
   | "idle"
@@ -65,6 +68,8 @@ type StudioActivity =
   | "playing"
   | "exporting";
 type PlaybackKind = "film" | "aid" | "compare" | null;
+type SettingsSection = "capture" | "motion" | "film" | null;
+type CaptureFeedback = "storing" | "stored" | null;
 
 const wait = (duration: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, duration));
@@ -116,9 +121,9 @@ export function Studio() {
   const streamRef = useRef<MediaStream | null>(null);
   const playbackSurfaceRef = useRef<SmoothPlaybackHandle>(null);
   const operationToken = useRef(0);
+  const exportControllerRef = useRef<AbortController | null>(null);
   const captureRequestPending = useRef(false);
   const flashTimer = useRef<number | null>(null);
-  const feedbackTimer = useRef<number | null>(null);
   const lowerResolutionNotified = useRef(false);
   const takePhotoRef = useRef<() => void>(() => undefined);
   const [cameraRestart, setCameraRestart] = useState(0);
@@ -127,22 +132,24 @@ export function Studio() {
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [activity, setActivity] = useState<StudioActivity>("idle");
   const [playbackKind, setPlaybackKind] = useState<PlaybackKind>(null);
-  const [previewPass, setPreviewPass] = useState(0);
+  const [previewFrameIndex, setPreviewFrameIndex] = useState(0);
   const [compareLabel, setCompareLabel] = useState<"Avant" | "Après" | null>(
     null,
   );
   const [countdown, setCountdown] = useState<number | null>(null);
   const [captureFlash, setCaptureFlash] = useState(false);
-  const [captureFeedback, setCaptureFeedback] = useState(false);
+  const [captureFeedback, setCaptureFeedback] = useState<CaptureFeedback>(null);
   const [playbackVisible, setPlaybackVisible] = useState(false);
   const [inspectionFrame, setInspectionFrame] = useState<FrameSummary | null>(
     null,
   );
   const [timelineOpen, setTimelineOpen] = useState(false);
-  const [timelineStart, setTimelineStart] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>(null);
   const [showExports, setShowExports] = useState(false);
+  const [showPhotoExports, setShowPhotoExports] = useState(false);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
+  const [exportCancellable, setExportCancellable] = useState(false);
   const [message, setMessage] = useState("");
   const [filmTitle, setFilmTitle] = useState(
     () => useStomoStore.getState().project?.name ?? "",
@@ -155,10 +162,6 @@ export function Studio() {
   const onionLayers = project
     ? buildOnionLayers(frames, project.onionFrameCount, project.onionOpacity)
     : [];
-  const visibleTimelineFrames = useMemo(
-    () => frames.slice(timelineStart, timelineStart + MAX_TIMELINE_THUMBNAILS),
-    [frames, timelineStart],
-  );
   const projectId = project?.id;
   const cameraFacing = project?.cameraFacing;
   const cameraDeviceId = project?.cameraDeviceId;
@@ -177,32 +180,27 @@ export function Studio() {
     setPlaybackVisible(false);
     setInspectionFrame(null);
     setPlaybackKind(null);
-    setPreviewPass(0);
+    setPreviewFrameIndex(0);
     setCompareLabel(null);
     setCaptureFlash(false);
-    setCaptureFeedback(false);
+    setCaptureFeedback(null);
     setActivity("idle");
   }, []);
 
   const showCaptureFeedback = useCallback(() => {
     if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
-    if (feedbackTimer.current !== null)
-      window.clearTimeout(feedbackTimer.current);
     setCaptureFlash(true);
-    setCaptureFeedback(true);
+    setCaptureFeedback("storing");
     flashTimer.current = window.setTimeout(() => {
       flashTimer.current = null;
       setCaptureFlash(false);
     }, 140);
   }, []);
 
-  const finishCaptureFeedback = useCallback(() => {
-    if (feedbackTimer.current !== null)
-      window.clearTimeout(feedbackTimer.current);
-    feedbackTimer.current = window.setTimeout(() => {
-      feedbackTimer.current = null;
-      setCaptureFeedback(false);
-    }, 700);
+  const confirmStoredCapture = useCallback(async (token: number) => {
+    setCaptureFeedback("stored");
+    await wait(420);
+    if (operationToken.current === token) setCaptureFeedback(null);
   }, []);
 
   useEffect(() => {
@@ -210,8 +208,6 @@ export function Studio() {
     return () => {
       document.body.classList.remove("studio-open");
       if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
-      if (feedbackTimer.current !== null)
-        window.clearTimeout(feedbackTimer.current);
     };
   }, []);
 
@@ -320,9 +316,25 @@ export function Studio() {
       setActivity("playing");
       setPlaybackKind("film");
       try {
+        const titleImage = await renderTitleCard(
+          project.name,
+          project.width,
+          project.height,
+        );
+        if (operationToken.current !== token) return;
+        const titleFrame: FrameRecord = {
+          id: `title-${project.id}-${project.name}`,
+          projectId: project.id,
+          position: -1,
+          image: titleImage,
+          thumbnail: titleImage,
+          width: project.width,
+          height: project.height,
+        };
         await playFramesInLoop({
           frames: sequence,
           fps: project.fps,
+          leadIn: { frame: titleFrame, durationMs: 2_000 },
           isActive: () => operationToken.current === token,
           show: (frame) => surface.show(frame),
           preload: (framesToPrepare) => surface.preload(framesToPrepare),
@@ -342,10 +354,10 @@ export function Studio() {
   const playMotionAid = useCallback(
     async (
       sequence: FrameSummary[],
-      loops: AutoPreviewLoops,
+      enabled: AutoPreviewLoops,
       token: number,
     ) => {
-      if (!sequence.length || loops === 0) {
+      if (!sequence.length || enabled === 0) {
         if (operationToken.current === token) setActivity("idle");
         return;
       }
@@ -355,15 +367,13 @@ export function Studio() {
       setPlaybackKind("aid");
       try {
         await surface.preload(sequence);
-        for (let loop = 0; loop < loops; loop += 1) {
-          setPreviewPass(loop + 1);
-          for (let index = 0; index < sequence.length; index += 1) {
-            if (operationToken.current !== token) return;
-            await surface.show(sequence[index]);
-            if (operationToken.current !== token) return;
-            setPlaybackVisible(true);
-            await wait(index === sequence.length - 1 ? 650 : 250);
-          }
+        for (let index = 0; index < sequence.length; index += 1) {
+          if (operationToken.current !== token) return;
+          await surface.show(sequence[index]);
+          if (operationToken.current !== token) return;
+          setPreviewFrameIndex(index + 1);
+          setPlaybackVisible(true);
+          await wait(250);
         }
       } catch {
         if (operationToken.current === token) {
@@ -429,7 +439,7 @@ export function Studio() {
       }
       if (!(await hasComfortableStorage(frames.length))) {
         setMessage(
-          "La mémoire du téléphone est presque pleine. Enregistre ton projet avant de continuer.",
+          "La mémoire du téléphone est presque pleine. Sauvegarde ton film, puis demande à un adulte de libérer de la place.",
         );
         return;
       }
@@ -456,7 +466,8 @@ export function Studio() {
       );
       if (operationToken.current !== token) return;
       await addCapturedFrame(captured);
-      finishCaptureFeedback();
+      await confirmStoredCapture(token);
+      if (operationToken.current !== token) return;
       navigator.vibrate?.([45, 40, 80]);
       if (captured.sourceBelowFullHd && !lowerResolutionNotified.current) {
         lowerResolutionNotified.current = true;
@@ -465,12 +476,8 @@ export function Studio() {
         );
       }
       const updatedFrames = useStomoStore.getState().frames;
-      if (timelineOpen)
-        setTimelineStart(
-          Math.max(0, updatedFrames.length - MAX_TIMELINE_THUMBNAILS),
-        );
       await playMotionAid(
-        updatedFrames.slice(-project.autoPreviewFrames),
+        updatedFrames.slice(-4),
         project.autoPreviewLoops,
         token,
       );
@@ -481,7 +488,7 @@ export function Studio() {
     } catch (caught) {
       setActivity("idle");
       setCaptureFlash(false);
-      setCaptureFeedback(false);
+      setCaptureFeedback(null);
       setMessage(
         caught instanceof Error
           ? snapshotTaken
@@ -498,12 +505,11 @@ export function Studio() {
     activity,
     addCapturedFrame,
     cameraReady,
+    confirmStoredCapture,
     frames.length,
-    finishCaptureFeedback,
     playMotionAid,
     project,
     showCaptureFeedback,
-    timelineOpen,
   ]);
   takePhotoRef.current = () => void takePhoto();
 
@@ -514,30 +520,41 @@ export function Studio() {
 
   const runExport = async (
     label: string,
-    work: (update: (current: number, total: number) => void) => Promise<void>,
+    work: (update: ExportUpdate, signal: AbortSignal) => Promise<void>,
+    cancellable = true,
   ) => {
     stopActivity();
+    const controller = new AbortController();
+    exportControllerRef.current = controller;
+    setExportCancellable(cancellable);
     setActivity("exporting");
     setProgress({ label, current: 0, total: Math.max(1, frames.length) });
     setMessage("");
     try {
-      await work((current, total) =>
-        setProgress({
-          label: `${label} ${current} sur ${total}`,
-          current,
-          total,
-        }),
+      await work(
+        (current, total, progressLabel) =>
+          setProgress({
+            label: progressLabel ?? `${label} ${current} sur ${total}`,
+            current,
+            total,
+          }),
+        controller.signal,
       );
       setShowExports(false);
       setMessage("C’est prêt ! Le fichier est dans Téléchargements.");
     } catch (caught) {
       setMessage(
-        caught instanceof Error
-          ? caught.message
-          : "Le fichier n’a pas pu être préparé. Ton projet est intact.",
+        (caught as { name?: string })?.name === "AbortError"
+          ? "Préparation arrêtée. Ton projet est intact."
+          : caught instanceof Error
+            ? caught.message
+            : "Le fichier n’a pas pu être préparé. Ton projet est intact.",
       );
     } finally {
+      if (exportControllerRef.current === controller)
+        exportControllerRef.current = null;
       setProgress(null);
+      setExportCancellable(false);
       setActivity("idle");
     }
   };
@@ -559,6 +576,17 @@ export function Studio() {
       setFilmTitle(project.name);
       setMessage("Le titre n’a pas pu être changé. L’ancien titre est gardé.");
     }
+  };
+
+  const toggleSettingsSection = (section: Exclude<SettingsSection, null>) => {
+    const next = settingsSection === section ? null : section;
+    setSettingsSection(next);
+    if (next)
+      window.requestAnimationFrame(() =>
+        document
+          .getElementById(`settings-${next}`)
+          ?.scrollIntoView({ block: "nearest" }),
+      );
   };
 
   if (!project) return null;
@@ -665,8 +693,13 @@ export function Studio() {
         )}
         {captureFlash && <div className="camera-flash" aria-hidden="true" />}
         {captureFeedback && (
-          <div className="capture-feedback" role="status">
-            Photo prise — je la range
+          <div
+            className={`capture-feedback capture-feedback--${captureFeedback}`}
+            role="status"
+          >
+            {captureFeedback === "storing"
+              ? "Photo prise — je la range"
+              : "Photo rangée ✓"}
           </div>
         )}
         {playbackKind === "compare" && compareLabel && (
@@ -691,21 +724,6 @@ export function Studio() {
             <RiGhostLine aria-hidden="true" />
             <span>Image fantôme</span>
           </button>
-          <button
-            aria-label="Afficher ou cacher la grille"
-            className={
-              project.gridEnabled
-                ? "tool-button tool-button--active"
-                : "tool-button"
-            }
-            type="button"
-            onClick={() =>
-              void updateProject({ gridEnabled: !project.gridEnabled })
-            }
-          >
-            <RiGridLine aria-hidden="true" />
-            <span>Grille</span>
-          </button>
         </div>
         <div className="stage-tools stage-tools--right">
           <button
@@ -719,16 +737,6 @@ export function Studio() {
             <span>Voir mon film</span>
           </button>
           <button
-            aria-label="Comparer les deux dernières photos"
-            className="tool-button"
-            type="button"
-            onClick={() => void compareLastPhotos()}
-            disabled={frames.length < 2 || busy}
-          >
-            <RiContrast2Line aria-hidden="true" />
-            <span>Comparer</span>
-          </button>
-          <button
             aria-label="Ouvrir les réglages"
             className="tool-button"
             type="button"
@@ -740,29 +748,28 @@ export function Studio() {
         </div>
 
         {activity === "playing" && playbackKind === "aid" ? (
-          <button
-            className="capture-button capture-button--stop capture-button--replay"
-            type="button"
-            onClick={stopActivity}
-            aria-label={`Relecture ${previewPass} sur ${project.autoPreviewLoops}. Passer.`}
-          >
-            <RiSkipForwardFill aria-hidden="true" />
-            <span className="replay-status" aria-hidden="true">
-              <small>Relecture</small>
-              <i>
-                {Array.from(
-                  { length: project.autoPreviewLoops },
-                  (_, index) => (
-                    <b
-                      className={index < previewPass ? "is-done" : ""}
-                      key={index}
-                    />
-                  ),
-                )}
-              </i>
-            </span>
-            <span>Passer</span>
-          </button>
+          <>
+            <div className="motion-aid-dots" aria-hidden="true">
+              {Array.from(
+                { length: Math.min(4, frames.length) },
+                (_, index) => (
+                  <i
+                    className={index < previewFrameIndex ? "is-active" : ""}
+                    key={index}
+                  />
+                ),
+              )}
+            </div>
+            <button
+              className="motion-aid-skip"
+              type="button"
+              onClick={stopActivity}
+              aria-label="Passer l’aperçu"
+              title="Passer"
+            >
+              <RiSkipForwardFill aria-hidden="true" />
+            </button>
+          </>
         ) : activity === "playing" ? (
           <button
             className="playback-stop-button"
@@ -819,9 +826,6 @@ export function Studio() {
             if (nextOpen) {
               const last = frames.at(-1);
               if (last) chooseFrame(last.id);
-              setTimelineStart(
-                Math.max(0, frames.length - MAX_TIMELINE_THUMBNAILS),
-              );
             }
             setInspectionFrame(null);
           }}
@@ -846,72 +850,16 @@ export function Studio() {
             >
               <RiCloseLine aria-hidden="true" />
             </button>
-            <div className="timeline-list">
-              {frames.length ? (
-                <>
-                  {timelineStart > 0 && (
-                    <button
-                      className="timeline-page"
-                      type="button"
-                      aria-label="Voir les photos précédentes"
-                      title="Photos précédentes"
-                      onClick={() =>
-                        setTimelineStart((start) =>
-                          Math.max(0, start - MAX_TIMELINE_THUMBNAILS + 6),
-                        )
-                      }
-                    >
-                      <RiSkipLeftLine aria-hidden="true" />
-                    </button>
-                  )}
-                  {visibleTimelineFrames.map((frame) => (
-                    <button
-                      className={
-                        frame.id === selectedFrame?.id
-                          ? "timeline-frame timeline-frame--selected"
-                          : "timeline-frame"
-                      }
-                      type="button"
-                      key={frame.id}
-                      onClick={() => {
-                        chooseFrame(frame.id);
-                        setInspectionFrame(frame);
-                        setTimelineOpen(false);
-                      }}
-                    >
-                      <FrameThumbnail
-                        frame={frame}
-                        alt={`Photo ${frame.position + 1}`}
-                      />
-                      <span>{frame.position + 1}</span>
-                    </button>
-                  ))}
-                  {timelineStart + MAX_TIMELINE_THUMBNAILS < frames.length && (
-                    <button
-                      className="timeline-page"
-                      type="button"
-                      aria-label="Voir les photos suivantes"
-                      title="Photos suivantes"
-                      onClick={() =>
-                        setTimelineStart((start) =>
-                          Math.min(
-                            Math.max(
-                              0,
-                              frames.length - MAX_TIMELINE_THUMBNAILS,
-                            ),
-                            start + MAX_TIMELINE_THUMBNAILS - 6,
-                          ),
-                        )
-                      }
-                    >
-                      <RiSkipRightLine aria-hidden="true" />
-                    </button>
-                  )}
-                </>
-              ) : (
-                <p>Ta première photo apparaîtra ici.</p>
-              )}
-            </div>
+            <VirtualTimeline
+              frames={frames}
+              orientation={project.orientation}
+              selectedFrameId={selectedFrame?.id ?? null}
+              onOpenFrame={(frame) => {
+                chooseFrame(frame.id);
+                setInspectionFrame(frame);
+                setTimelineOpen(false);
+              }}
+            />
             <div className="timeline-actions">
               <button
                 type="button"
@@ -982,222 +930,340 @@ export function Studio() {
       )}
 
       {showSettings && (
-        <Dialog title="Réglages du film" onClose={() => setShowSettings(false)}>
-          <div className="dialog__content settings-list">
-            <div className="settings-row settings-title-row">
-              <span>
-                <RiEditLine aria-hidden="true" />
-                <strong>Titre du film</strong>
-                <small>Donne un nom facile à reconnaître.</small>
-              </span>
-              <div className="title-editor">
-                <input
-                  value={filmTitle}
-                  maxLength={60}
-                  onChange={(event) => setFilmTitle(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    void saveFilmTitle();
-                  }}
-                  aria-label="Nouveau titre du film"
-                />
-                <button type="button" onClick={() => void saveFilmTitle()}>
-                  Changer le titre
-                </button>
-              </div>
-            </div>
-            <label>
-              <span>
-                <RiCameraSwitchLine aria-hidden="true" />
-                <strong>Caméra</strong>
-                <small>La caméra arrière est choisie au début.</small>
-              </span>
-              <select
-                value={project.cameraDeviceId ?? ""}
-                onChange={(event) => {
-                  const device = cameraDevices.find(
-                    (candidate) => candidate.deviceId === event.target.value,
-                  );
-                  const label = device?.label.toLocaleLowerCase("fr") ?? "";
-                  void updateProject({
-                    cameraDeviceId: event.target.value || null,
-                    cameraFacing: /back|rear|environment|arrière|dos/.test(
-                      label,
-                    )
-                      ? "environment"
-                      : "user",
-                  });
-                }}
-              >
-                <option value="">Caméra arrière (automatique)</option>
-                {cameraDevices.map((device, index) => (
-                  <option key={device.deviceId} value={device.deviceId}>
-                    {cameraLabel(device, index)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>
-                <RiHeadphoneLine aria-hidden="true" />
-                <strong>Bouton du casque</strong>
-                <small>
-                  {headset.status === "ready"
-                    ? "Prêt à prendre une photo."
-                    : headset.status === "unsupported"
-                      ? "Non disponible dans ce navigateur."
-                      : "Touche le bouton pour l’activer."}
-                </small>
-              </span>
+        <Dialog
+          title="Réglages du film"
+          onClose={() => {
+            setShowSettings(false);
+            setSettingsSection(null);
+          }}
+        >
+          <div className="dialog__content settings-accordions">
+            <section className="settings-accordion" id="settings-capture">
               <button
-                className="settings-connect-button"
+                className="settings-accordion__heading"
                 type="button"
-                disabled={headset.status === "unsupported"}
-                onClick={() => void headset.reconnect()}
+                aria-expanded={settingsSection === "capture"}
+                onClick={() => toggleSettingsSection("capture")}
               >
-                {headset.status === "ready" ? "Bouton prêt" : "Activer"}
-              </button>
-            </label>
-            <label>
-              <span>
-                {project.orientation === "portrait" ? (
-                  <RiSmartphoneLine aria-hidden="true" />
+                <RiCameraFill aria-hidden="true" />
+                <span>
+                  <strong>Prendre les photos</strong>
+                  <small>Caméra, retardateur et grille</small>
+                </span>
+                {settingsSection === "capture" ? (
+                  <RiArrowUpSLine aria-hidden="true" />
                 ) : (
-                  <RiLandscapeLine aria-hidden="true" />
+                  <RiArrowDownSLine aria-hidden="true" />
                 )}
-                <strong>Sens du film</strong>
-                <small>
-                  {frames.length
-                    ? "Le sens est fixé après la première photo."
-                    : "Choisis avant de prendre la première photo."}
-                </small>
-              </span>
-              <select
-                value={project.orientation}
-                disabled={frames.length > 0}
-                onChange={(event) => {
-                  const orientation = event.target.value as FilmOrientation;
-                  void updateProject({
-                    orientation,
-                    ...FULL_HD[orientation],
-                  });
-                }}
+              </button>
+              {settingsSection === "capture" && (
+                <div className="settings-accordion__panel settings-list">
+                  <label>
+                    <span>
+                      <RiCameraSwitchLine aria-hidden="true" />
+                      <strong>Caméra</strong>
+                      <small>La caméra arrière est choisie au début.</small>
+                    </span>
+                    <select
+                      value={project.cameraDeviceId ?? ""}
+                      onChange={(event) => {
+                        const device = cameraDevices.find(
+                          (candidate) =>
+                            candidate.deviceId === event.target.value,
+                        );
+                        const label =
+                          device?.label.toLocaleLowerCase("fr") ?? "";
+                        void updateProject({
+                          cameraDeviceId: event.target.value || null,
+                          cameraFacing:
+                            /back|rear|environment|arrière|dos/.test(label)
+                              ? "environment"
+                              : "user",
+                        });
+                      }}
+                    >
+                      <option value="">Caméra arrière (automatique)</option>
+                      {cameraDevices.map((device, index) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {cameraLabel(device, index)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>
+                      {project.orientation === "portrait" ? (
+                        <RiSmartphoneLine aria-hidden="true" />
+                      ) : (
+                        <RiLandscapeLine aria-hidden="true" />
+                      )}
+                      <strong>Sens du film</strong>
+                      <small>
+                        {frames.length
+                          ? "Fixé après la première photo."
+                          : "Choisis avant la première photo."}
+                      </small>
+                    </span>
+                    <select
+                      value={project.orientation}
+                      disabled={frames.length > 0}
+                      onChange={(event) => {
+                        const orientation = event.target
+                          .value as FilmOrientation;
+                        void updateProject({
+                          orientation,
+                          ...FULL_HD[orientation],
+                        });
+                      }}
+                    >
+                      <option value="landscape">Paysage</option>
+                      <option value="portrait">Vertical</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>
+                      <RiTimerLine aria-hidden="true" />
+                      <strong>Retardateur</strong>
+                      <small>Le temps pour retirer ta main.</small>
+                    </span>
+                    <select
+                      value={project.countdownSeconds}
+                      onChange={(event) =>
+                        void updateProject({
+                          countdownSeconds: Number(
+                            event.target.value,
+                          ) as CountdownSeconds,
+                        })
+                      }
+                    >
+                      <option value={0}>Sans retardateur</option>
+                      <option value={1}>1 seconde</option>
+                      <option value={2}>2 secondes</option>
+                      <option value={3}>3 secondes</option>
+                      <option value={5}>5 secondes</option>
+                    </select>
+                  </label>
+                  <div className="settings-row">
+                    <span>
+                      <RiGridLine aria-hidden="true" />
+                      <strong>Grille</strong>
+                      <small>Aide à placer les objets dans l’image.</small>
+                    </span>
+                    <button
+                      className="settings-toggle"
+                      type="button"
+                      aria-pressed={project.gridEnabled}
+                      onClick={() =>
+                        void updateProject({
+                          gridEnabled: !project.gridEnabled,
+                        })
+                      }
+                    >
+                      {project.gridEnabled ? "Oui" : "Non"}
+                    </button>
+                  </div>
+                  <div className="settings-row">
+                    <span>
+                      <RiHeadphoneLine aria-hidden="true" />
+                      <strong>Bouton du casque</strong>
+                      <small>
+                        {headset.status === "ready"
+                          ? "Prêt à prendre une photo."
+                          : headset.status === "unsupported"
+                            ? "Non disponible ici."
+                            : "Touche le bouton pour l’activer."}
+                      </small>
+                    </span>
+                    <button
+                      className="settings-connect-button"
+                      type="button"
+                      disabled={headset.status === "unsupported"}
+                      onClick={() => void headset.reconnect()}
+                    >
+                      {headset.status === "ready" ? "Bouton prêt" : "Activer"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className="settings-accordion" id="settings-motion">
+              <button
+                className="settings-accordion__heading"
+                type="button"
+                aria-expanded={settingsSection === "motion"}
+                onClick={() => toggleSettingsSection("motion")}
               >
-                <option value="landscape">Paysage</option>
-                <option value="portrait">Vertical</option>
-              </select>
-            </label>
-            <label>
-              <span>
-                <RiTimerLine aria-hidden="true" />
-                <strong>Retardateur</strong>
-                <small>Le temps pour retirer ta main.</small>
-              </span>
-              <select
-                value={project.countdownSeconds}
-                onChange={(event) =>
-                  void updateProject({
-                    countdownSeconds: Number(
-                      event.target.value,
-                    ) as CountdownSeconds,
-                  })
-                }
-              >
-                <option value={0}>Sans retardateur</option>
-                <option value={1}>1 seconde</option>
-                <option value={2}>2 secondes</option>
-                <option value={3}>3 secondes</option>
-                <option value={5}>5 secondes</option>
-              </select>
-            </label>
-            <label>
-              <span>
-                <RiPlayFill aria-hidden="true" />
-                <strong>Aide après chaque photo</strong>
-                <small>Rejoue doucement les 6 dernières photos.</small>
-              </span>
-              <select
-                value={project.autoPreviewLoops}
-                onChange={(event) =>
-                  void updateProject({
-                    autoPreviewLoops: Number(
-                      event.target.value,
-                    ) as AutoPreviewLoops,
-                  })
-                }
-              >
-                <option value={0}>Ne pas rejouer</option>
-                {[1, 2, 3, 4].map((loops) => (
-                  <option key={loops} value={loops}>
-                    {loops} passage{loops > 1 ? "s" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>
-                <RiSpeedLine aria-hidden="true" />
-                <strong>Vitesse du film</strong>
-                <small>Plus le nombre est grand, plus le film va vite.</small>
-              </span>
-              <select
-                value={project.fps}
-                onChange={(event) =>
-                  void updateProject({
-                    fps: Number(event.target.value) as FrameRate,
-                  })
-                }
-              >
-                {[4, 6, 8, 10, 12].map((fps) => (
-                  <option key={fps} value={fps}>
-                    {fps} images par seconde
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>
                 <RiGhostLine aria-hidden="true" />
-                <strong>Image fantôme</strong>
-                <small>Les dernières photos aident à placer les objets.</small>
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="0.7"
-                step="0.1"
-                value={project.onionOpacity}
-                onChange={(event) =>
-                  void updateProject({
-                    onionOpacity: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-            <label>
-              <span>
-                <RiGhostLine aria-hidden="true" />
-                <strong>Nombre d’images fantômes</strong>
-                <small>Les plus anciennes deviennent plus légères.</small>
-              </span>
-              <select
-                value={project.onionFrameCount}
-                onChange={(event) =>
-                  void updateProject({
-                    onionFrameCount: Number(
-                      event.target.value,
-                    ) as OnionFrameCount,
-                  })
-                }
+                <span>
+                  <strong>Voir le mouvement</strong>
+                  <small>Aperçu, comparaison et images fantômes</small>
+                </span>
+                {settingsSection === "motion" ? (
+                  <RiArrowUpSLine aria-hidden="true" />
+                ) : (
+                  <RiArrowDownSLine aria-hidden="true" />
+                )}
+              </button>
+              {settingsSection === "motion" && (
+                <div className="settings-accordion__panel settings-list">
+                  <div className="settings-row">
+                    <span>
+                      <RiPlayFill aria-hidden="true" />
+                      <strong>Aperçu après la photo</strong>
+                      <small>
+                        Montre les quatre dernières images une fois.
+                      </small>
+                    </span>
+                    <button
+                      className="settings-toggle"
+                      type="button"
+                      aria-pressed={project.autoPreviewLoops > 0}
+                      onClick={() =>
+                        void updateProject({
+                          autoPreviewFrames: 4,
+                          autoPreviewLoops: project.autoPreviewLoops ? 0 : 1,
+                        })
+                      }
+                    >
+                      {project.autoPreviewLoops ? "Oui" : "Non"}
+                    </button>
+                  </div>
+                  <div className="settings-row">
+                    <span>
+                      <RiContrast2Line aria-hidden="true" />
+                      <strong>Comparer deux photos</strong>
+                      <small>Alterne lentement Avant et Après.</small>
+                    </span>
+                    <button
+                      className="settings-connect-button"
+                      type="button"
+                      disabled={frames.length < 2 || busy}
+                      onClick={() => {
+                        setShowSettings(false);
+                        setSettingsSection(null);
+                        void compareLastPhotos();
+                      }}
+                    >
+                      Comparer
+                    </button>
+                  </div>
+                  <label>
+                    <span>
+                      <RiGhostLine aria-hidden="true" />
+                      <strong>Transparence</strong>
+                      <small>Règle la force des images fantômes.</small>
+                    </span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="0.7"
+                      step="0.1"
+                      value={project.onionOpacity}
+                      onChange={(event) =>
+                        void updateProject({
+                          onionOpacity: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>
+                      <RiGhostLine aria-hidden="true" />
+                      <strong>Nombre d’images fantômes</strong>
+                      <small>Les plus anciennes sont plus légères.</small>
+                    </span>
+                    <select
+                      value={project.onionFrameCount}
+                      onChange={(event) =>
+                        void updateProject({
+                          onionFrameCount: Number(
+                            event.target.value,
+                          ) as OnionFrameCount,
+                        })
+                      }
+                    >
+                      {[1, 2, 3].map((count) => (
+                        <option key={count} value={count}>
+                          {count} image{count > 1 ? "s" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+            </section>
+
+            <section className="settings-accordion" id="settings-film">
+              <button
+                className="settings-accordion__heading"
+                type="button"
+                aria-expanded={settingsSection === "film"}
+                onClick={() => toggleSettingsSection("film")}
               >
-                {[1, 2, 3].map((count) => (
-                  <option key={count} value={count}>
-                    {count} image{count > 1 ? "s" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <RiFilmLine aria-hidden="true" />
+                <span>
+                  <strong>Mon film</strong>
+                  <small>Titre et vitesse</small>
+                </span>
+                {settingsSection === "film" ? (
+                  <RiArrowUpSLine aria-hidden="true" />
+                ) : (
+                  <RiArrowDownSLine aria-hidden="true" />
+                )}
+              </button>
+              {settingsSection === "film" && (
+                <div className="settings-accordion__panel settings-list">
+                  <div className="settings-row settings-title-row">
+                    <span>
+                      <RiEditLine aria-hidden="true" />
+                      <strong>Titre du film</strong>
+                      <small>Il apparaît au début du film.</small>
+                    </span>
+                    <div className="title-editor">
+                      <input
+                        value={filmTitle}
+                        maxLength={60}
+                        onChange={(event) => setFilmTitle(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          void saveFilmTitle();
+                        }}
+                        aria-label="Nouveau titre du film"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void saveFilmTitle()}
+                      >
+                        Changer le titre
+                      </button>
+                    </div>
+                  </div>
+                  <label>
+                    <span>
+                      <RiSpeedLine aria-hidden="true" />
+                      <strong>Vitesse du film</strong>
+                      <small>Un grand nombre fait avancer plus vite.</small>
+                    </span>
+                    <select
+                      value={project.fps}
+                      onChange={(event) =>
+                        void updateProject({
+                          fps: Number(event.target.value) as FrameRate,
+                        })
+                      }
+                    >
+                      {[4, 6, 8, 10, 12].map((fps) => (
+                        <option key={fps} value={fps}>
+                          {fps} images par seconde
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+            </section>
           </div>
         </Dialog>
       )}
@@ -1211,65 +1277,90 @@ export function Studio() {
           <div className="dialog__content export-grid">
             <button
               type="button"
-              disabled={!selectedFrame || busy}
-              onClick={() =>
-                selectedFrame &&
-                void runExport("Préparation de la photo", async () =>
-                  exportSelectedPhoto(project, selectedFrame),
-                )
-              }
-            >
-              <RiImageDownloadLine aria-hidden="true" />
-              <span>
-                <strong>Enregistrer cette photo</strong>
-                <small>Une image JPEG en Full HD</small>
-              </span>
-            </button>
-            <button
-              type="button"
+              className="export-choice export-choice--film"
               disabled={!frames.length || busy}
               onClick={() =>
-                void runExport("Préparation de la photo", (update) =>
-                  exportPhotosZip(project, frames, update),
-                )
-              }
-            >
-              <RiGalleryLine aria-hidden="true" />
-              <span>
-                <strong>Enregistrer toutes les photos</strong>
-                <small>Un dossier compressé ZIP</small>
-              </span>
-            </button>
-            <button
-              type="button"
-              disabled={!frames.length || busy}
-              onClick={() =>
-                void runExport("Préparation de la vidéo", (update) =>
-                  exportVideo(project, frames, update),
+                void runExport("Je prépare le film", (update, signal) =>
+                  exportVideo(project, frames, update, signal),
                 )
               }
             >
               <RiFilmLine aria-hidden="true" />
               <span>
-                <strong>Enregistrer la vidéo</strong>
-                <small>Un film WebM muet en Full HD</small>
+                <strong>Montrer mon film</strong>
+                <small>Vidéo Full HD · WebM</small>
               </span>
             </button>
             <button
               type="button"
+              className="export-choice export-choice--project"
               disabled={busy}
               onClick={() =>
-                void runExport("Sauvegarde de la photo", (update) =>
-                  exportProject(project, frames, update),
+                void runExport("Je garde le projet", (update, signal) =>
+                  exportProject(project, frames, update, signal),
                 )
               }
             >
               <RiFolderDownloadLine aria-hidden="true" />
               <span>
-                <strong>Sauvegarder ce projet</strong>
-                <small>Images et réglages dans un fichier .stomo</small>
+                <strong>Garder mon projet</strong>
+                <small>Images et réglages · .stomo</small>
               </span>
             </button>
+            <button
+              className="export-photo-heading"
+              type="button"
+              aria-expanded={showPhotoExports}
+              onClick={() => setShowPhotoExports((shown) => !shown)}
+            >
+              <RiGalleryLine aria-hidden="true" />
+              <span>
+                <strong>Récupérer mes photos</strong>
+                <small>Une photo ou toute la série</small>
+              </span>
+              {showPhotoExports ? (
+                <RiArrowUpSLine aria-hidden="true" />
+              ) : (
+                <RiArrowDownSLine aria-hidden="true" />
+              )}
+            </button>
+            {showPhotoExports && (
+              <div className="export-photo-options">
+                <button
+                  type="button"
+                  disabled={!selectedFrame || busy}
+                  onClick={() =>
+                    selectedFrame &&
+                    void runExport(
+                      "Je prépare la photo",
+                      async () => exportSelectedPhoto(project, selectedFrame),
+                      false,
+                    )
+                  }
+                >
+                  <RiImageDownloadLine aria-hidden="true" />
+                  <span>
+                    <strong>Cette photo</strong>
+                    <small>Image Full HD · JPEG</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!frames.length || busy}
+                  onClick={() =>
+                    void runExport("Je prépare la photo", (update, signal) =>
+                      exportPhotosZip(project, frames, update, signal),
+                    )
+                  }
+                >
+                  <RiGalleryLine aria-hidden="true" />
+                  <span>
+                    <strong>Toutes les photos</strong>
+                    <small>Série numérotée · ZIP</small>
+                  </span>
+                </button>
+              </div>
+            )}
             <p className="download-help">
               <RiDownload2Line aria-hidden="true" /> Tes fichiers arrivent dans{" "}
               <strong>Téléchargements</strong> sur le téléphone.
@@ -1284,6 +1375,15 @@ export function Studio() {
           <strong>{progress.label}</strong>
           <progress value={progress.current} max={progress.total} />
           <span>Ton projet reste bien enregistré.</span>
+          {exportCancellable && (
+            <button
+              className="cancel-export-button"
+              type="button"
+              onClick={() => exportControllerRef.current?.abort()}
+            >
+              <RiStopFill aria-hidden="true" /> Arrêter la préparation
+            </button>
+          )}
         </div>
       )}
     </main>

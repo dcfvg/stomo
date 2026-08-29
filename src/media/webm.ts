@@ -94,6 +94,16 @@ interface PreparedFrame {
   payload: Blob;
 }
 
+interface WebmOptions {
+  leadIn?: { image: Blob; durationMs: number };
+  signal?: AbortSignal;
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted)
+    throw new DOMException("La préparation a été arrêtée.", "AbortError");
+}
+
 function cluster(clusterTime: number, frames: PreparedFrame[]) {
   return element(
     0x1f43b675,
@@ -116,6 +126,7 @@ export async function framesToWebm<T extends FrameSummary>(
     if ("image" in frame && frame.image instanceof Blob) return frame.image;
     throw new Error("Cette photo est introuvable.");
   },
+  options: WebmOptions = {},
 ) {
   if (!frames.length)
     throw new Error("Prends au moins une photo avant d’enregistrer une vidéo.");
@@ -123,17 +134,38 @@ export async function framesToWebm<T extends FrameSummary>(
   const clusters: Blob[] = [];
   let clusterTime = -1;
   let clusterFrames: PreparedFrame[] = [];
+  let outputFrameIndex = 0;
 
-  for (let index = 0; index < frames.length; index += 1) {
-    const time = Math.round(index * frameDuration);
+  const appendPayload = (payload: Blob) => {
+    const time = Math.round(outputFrameIndex * frameDuration);
+    outputFrameIndex += 1;
     if (clusterTime < 0) clusterTime = time;
     if (time - clusterTime >= 1_000 && clusterFrames.length) {
       clusters.push(cluster(clusterTime, clusterFrames));
       clusterTime = time;
       clusterFrames = [];
     }
+    clusterFrames.push({ time, payload });
+  };
+
+  if (options.leadIn) {
+    throwIfAborted(options.signal);
+    const titlePayload = await extractVp8(options.leadIn.image);
+    const titleFrameCount = Math.max(
+      1,
+      Math.round(options.leadIn.durationMs / frameDuration),
+    );
+    for (let index = 0; index < titleFrameCount; index += 1) {
+      throwIfAborted(options.signal);
+      appendPayload(titlePayload);
+    }
+  }
+
+  for (let index = 0; index < frames.length; index += 1) {
+    throwIfAborted(options.signal);
     const preparedImage = await prepareImage(frames[index]);
-    clusterFrames.push({ time, payload: await extractVp8(preparedImage) });
+    throwIfAborted(options.signal);
+    appendPayload(await extractVp8(preparedImage));
     onProgress?.(index + 1, frames.length);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
@@ -155,7 +187,7 @@ export async function framesToWebm<T extends FrameSummary>(
     0x1549a966,
     new Blob([
       element(0x2ad7b1, uint(1_000_000)),
-      element(0x4489, float64(frames.length * frameDuration)),
+      element(0x4489, float64(outputFrameIndex * frameDuration)),
       element(0x4d80, text("Stomo")),
       element(0x5741, text("Stomo")),
     ]),

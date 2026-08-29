@@ -63,4 +63,37 @@ describe("lecture du film en boucle", () => {
       expect(shown).toBe(count + 1);
     },
   );
+
+  it("montre le titre deux secondes au début de chaque tour", async () => {
+    const frames = [frame(0), frame(1)];
+    const title = { ...frame(-1), id: "title" };
+    const shown: string[] = [];
+    const waits: number[] = [];
+    let active = true;
+
+    await playFramesInLoop({
+      frames,
+      fps: 4,
+      leadIn: { frame: title, durationMs: 2_000 },
+      isActive: () => active,
+      preload: async () => undefined,
+      show: async (current) => {
+        shown.push(current.id);
+        if (shown.length === 6) active = false;
+      },
+      waitFrame: async (duration) => {
+        waits.push(duration);
+      },
+    });
+
+    expect(shown).toEqual([
+      "title",
+      "frame-0",
+      "frame-1",
+      "title",
+      "frame-0",
+      "frame-1",
+    ]);
+    expect(waits).toEqual([2_000, 250, 250, 2_000, 250]);
+  });
 });

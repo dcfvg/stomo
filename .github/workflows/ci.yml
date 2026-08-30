@@ -1,0 +1,33 @@
+name: Vérifier Stomo
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le projet
+        uses: actions/checkout@v4
+      - name: Installer Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Installer les dépendances
+        run: npm ci
+      - name: Installer les navigateurs de recette
+        run: npx playwright install --with-deps chromium webkit
+      - name: Vérifier le code, le build et les mobiles
+        run: npm run check:ci
+        env:
+          VITE_BASE: /stomo/
+          VITE_SITE_URL: https://dcfvg.github.io/stomo/

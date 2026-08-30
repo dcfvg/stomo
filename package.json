@@ -1,7 +1,18 @@
 {
   "name": "stomo",
   "version": "0.1.0",
+  "description": "Studio de stop motion hors ligne conçu pour les enfants.",
   "private": true,
+  "license": "AGPL-3.0-only",
+  "author": "dcfvg",
+  "homepage": "https://dcfvg.github.io/stomo/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dcfvg/stomo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dcfvg/stomo/issues"
+  },
   "type": "module",
   "packageManager": "npm@11.16.0",
   "engines": {
@@ -12,15 +23,25 @@
     "cert:dev": "node scripts/create-dev-certificate.mjs",
     "dev:https": "STOMO_HTTPS=1 vite",
     "build": "tsc --noEmit && vite build",
+    "build:pages": "VITE_BASE=/stomo/ VITE_SITE_URL=https://dcfvg.github.io/stomo/ npm run build",
     "verify:offline": "node scripts/verify-offline-build.mjs",
     "preview": "vite preview",
+    "preview:test": "VITE_BASE=/stomo/ vite preview --host 127.0.0.1 --port 4187 --strictPort",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint --max-warnings=0 src",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
-    "check": "npm run lint && npm test && npm run build && npm run verify:offline"
+    "test:e2e": "npm run build:pages && playwright test",
+    "lint": "eslint --max-warnings=0 src e2e playwright.config.ts",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"playwright.config.ts\" \"vite.config.ts\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"playwright.config.ts\" \"vite.config.ts\"",
+    "check": "npm run lint && npm test && npm run build && npm run verify:offline",
+    "check:ci": "npm run check && npm run test:e2e"
   },
+  "browserslist": [
+    "and_chr >= 101",
+    "samsung >= 18",
+    "ios_saf >= 17.4",
+    "safari >= 17.4"
+  ],
   "dependencies": {
     "@fontsource-variable/lexend": "^5.3.0",
     "@remixicon/react": "4.9.0",
@@ -31,6 +52,7 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.4",
+    "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.1",

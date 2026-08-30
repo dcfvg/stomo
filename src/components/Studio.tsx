@@ -23,6 +23,7 @@ import {
   RiPlayFill,
   RiCloseLine,
   RiSettings3Line,
+  RiShareForwardLine,
   RiSkipForwardFill,
   RiSmartphoneLine,
   RiSpeedLine,
@@ -38,6 +39,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  deliverPreparedFile,
   exportPhotosZip,
   exportProject,
   exportSelectedPhoto,
@@ -54,6 +56,12 @@ import { useStomoStore } from "../state/useStomoStore";
 import { FRAME_WARNING, MAX_FRAMES } from "../config";
 import { getFrameImage } from "../storage/database";
 import { fitMediaRect, type MediaRect } from "../lib/mediaRect";
+import {
+  canPlayWebm,
+  canUseCamera,
+  canUseResizeObserver,
+  isAppleMobileInstallEnvironment,
+} from "../lib/capabilities";
 import type {
   CountdownSeconds,
   ExportProgress,
@@ -163,9 +171,15 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
   const [showPhotoExports, setShowPhotoExports] = useState(false);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const [exportCancellable, setExportCancellable] = useState(false);
+  const [readyFile, setReadyFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
   const [filmTitle, setFilmTitle] = useState(
     () => useStomoStore.getState().project?.name ?? "",
+  );
+  const videoExportAvailable = useMemo(() => canPlayWebm(), []);
+  const appleFileDelivery = useMemo(
+    () => isAppleMobileInstallEnvironment(),
+    [],
   );
 
   const selectedFrame = useMemo(
@@ -247,7 +261,7 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
     updateCameraContentRect();
     const stage = stageRef.current;
     const observer =
-      stage && typeof ResizeObserver === "function"
+      stage && canUseResizeObserver()
         ? new ResizeObserver(updateCameraContentRect)
         : null;
     if (stage) observer?.observe(stage);
@@ -269,10 +283,8 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
         setCameraError(securityMessage);
         return;
       }
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setCameraError(
-          "Cette version de Chrome ne donne pas accès à la caméra ici.",
-        );
+      if (!canUseCamera()) {
+        setCameraError("Ce navigateur ne donne pas accès à la caméra ici.");
         return;
       }
       try {
@@ -311,7 +323,7 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
         updateCameraContentRect();
       } catch {
         setCameraError(
-          "La caméra est bloquée. Autorise-la dans Chrome, puis réessaie.",
+          "La caméra est bloquée. Autorise-la dans les réglages du navigateur, puis réessaie.",
         );
       }
     };
@@ -470,6 +482,7 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
       !videoRef.current ||
       !cameraReady ||
       activity !== "idle" ||
+      readyFile ||
       captureRequestPending.current
     )
       return;
@@ -558,6 +571,7 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
     frames.length,
     playMotionAid,
     project,
+    readyFile,
     shootingPreferences.autoPreviewEnabled,
     shootingPreferences.countdownSeconds,
     showCaptureFeedback,
@@ -571,7 +585,7 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
 
   const runExport = async (
     label: string,
-    work: (update: ExportUpdate, signal: AbortSignal) => Promise<void>,
+    work: (update: ExportUpdate, signal: AbortSignal) => Promise<File>,
     cancellable = true,
   ) => {
     stopActivity();
@@ -582,7 +596,7 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
     setProgress({ label, current: 0, total: Math.max(1, frames.length) });
     setMessage("");
     try {
-      await work(
+      const file = await work(
         (current, total, progressLabel) =>
           setProgress({
             label: progressLabel ?? `${label} ${current} sur ${total}`,
@@ -592,7 +606,13 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
         controller.signal,
       );
       setShowExports(false);
-      setMessage("C’est prêt ! Le fichier est dans Téléchargements.");
+      const delivery = await deliverPreparedFile(file);
+      if (delivery === "needs-action") {
+        setReadyFile(file);
+        setMessage("Ton fichier est prêt. Choisis maintenant où le garder.");
+      } else {
+        setMessage("C’est prêt ! Ton fichier est enregistré.");
+      }
     } catch (caught) {
       setMessage(
         (caught as { name?: string })?.name === "AbortError"
@@ -608,6 +628,17 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
       setExportCancellable(false);
       setActivity("idle");
     }
+  };
+
+  const saveReadyFile = async () => {
+    if (!readyFile) return;
+    const delivery = await deliverPreparedFile(readyFile, true);
+    if (delivery === "cancelled") {
+      setMessage("Rien n’a été envoyé. Tu peux réessayer.");
+      return;
+    }
+    setReadyFile(null);
+    setMessage("C’est prêt ! Ton fichier est enregistré.");
   };
 
   const saveFilmTitle = async () => {
@@ -1097,27 +1128,26 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
                       {shootingPreferences.gridEnabled ? "Oui" : "Non"}
                     </button>
                   </div>
-                  <div className="settings-row">
-                    <span>
-                      <RiHeadphoneLine aria-hidden="true" />
-                      <strong>Bouton du casque</strong>
-                      <small>
-                        {headset.status === "ready"
-                          ? "Prêt à prendre une photo."
-                          : headset.status === "unsupported"
-                            ? "Non disponible ici."
+                  {headset.status !== "unsupported" && (
+                    <div className="settings-row">
+                      <span>
+                        <RiHeadphoneLine aria-hidden="true" />
+                        <strong>Bouton du casque</strong>
+                        <small>
+                          {headset.status === "ready"
+                            ? "Prêt à prendre une photo."
                             : "Touche le bouton pour l’activer."}
-                      </small>
-                    </span>
-                    <button
-                      className="settings-connect-button"
-                      type="button"
-                      disabled={headset.status === "unsupported"}
-                      onClick={() => void headset.reconnect()}
-                    >
-                      {headset.status === "ready" ? "Bouton prêt" : "Activer"}
-                    </button>
-                  </div>
+                        </small>
+                      </span>
+                      <button
+                        className="settings-connect-button"
+                        type="button"
+                        onClick={() => void headset.reconnect()}
+                      >
+                        {headset.status === "ready" ? "Bouton prêt" : "Activer"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </section>
@@ -1343,7 +1373,7 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
             <button
               type="button"
               className="export-choice export-choice--film"
-              disabled={!frames.length || busy}
+              disabled={!frames.length || busy || !videoExportAvailable}
               onClick={() =>
                 void runExport("Je prépare le film", (update, signal) =>
                   exportVideo(project, frames, update, signal),
@@ -1353,7 +1383,11 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
               <RiFilmLine aria-hidden="true" />
               <span>
                 <strong>Montrer mon film</strong>
-                <small>Vidéo Full HD · WebM</small>
+                <small>
+                  {videoExportAvailable
+                    ? "Vidéo Full HD · WebM"
+                    : "Vidéo indisponible sur ce navigateur"}
+                </small>
               </span>
             </button>
             <button
@@ -1427,8 +1461,17 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
               </div>
             )}
             <p className="download-help">
-              <RiDownload2Line aria-hidden="true" /> Tes fichiers arrivent dans{" "}
-              <strong>Téléchargements</strong> sur le téléphone.
+              {appleFileDelivery ? (
+                <>
+                  <RiShareForwardLine aria-hidden="true" /> Tu choisiras où
+                  garder ton fichier lorsqu’il sera prêt.
+                </>
+              ) : (
+                <>
+                  <RiDownload2Line aria-hidden="true" /> Tes fichiers arrivent
+                  dans <strong>Téléchargements</strong> sur le téléphone.
+                </>
+              )}
             </p>
           </div>
         </Dialog>
@@ -1449,6 +1492,37 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
               <RiStopFill aria-hidden="true" /> Arrêter la préparation
             </button>
           )}
+        </div>
+      )}
+
+      {readyFile && (
+        <div
+          className="progress-overlay ready-file-overlay"
+          role="dialog"
+          aria-modal="true"
+        >
+          <RiShareForwardLine aria-hidden="true" />
+          <strong>Ton fichier est prêt</strong>
+          <span>Choisis où tu veux le garder sur ce téléphone.</span>
+          <button
+            className="ready-file-button"
+            type="button"
+            onClick={() => void saveReadyFile()}
+          >
+            <RiShareForwardLine aria-hidden="true" /> Enregistrer le fichier
+          </button>
+          <button
+            className="ready-file-later"
+            type="button"
+            onClick={() => {
+              setReadyFile(null);
+              setMessage(
+                "Le fichier n’a pas été enregistré. Ton projet est intact.",
+              );
+            }}
+          >
+            Annuler
+          </button>
         </div>
       )}
     </main>

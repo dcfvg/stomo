@@ -1,48 +1,63 @@
 # Stomo
 
-Stomo est un studio de stop motion en français, conçu pour être explicite et agréable à utiliser dès 8 ans. L’application fonctionne dans Chrome, conserve les films dans le navigateur et continue de fonctionner hors connexion après son installation.
+Stomo est un studio de stop motion en français, conçu pour les enfants à partir
+de 8 ans. La caméra, le montage, la lecture et les sauvegardes restent sur le
+téléphone.
 
-## Installer sur le téléphone
+## Essayer
 
-1. Ouvrir l’adresse GitHub Pages de Stomo dans Chrome avec une connexion internet.
-2. Dans le menu Chrome, choisir **Ajouter à l’écran d’accueil**.
-3. Ouvrir Stomo depuis sa nouvelle icône une première fois.
-4. Pour vérifier le mode hors ligne, activer le mode avion puis rouvrir Stomo.
+La version publiée est disponible sur
+[dcfvg.github.io/stomo](https://dcfvg.github.io/stomo/).
 
-Les photos, vidéos et sauvegardes demandées arrivent dans le dossier **Téléchargements**. Les projets restent aussi dans les données du site Chrome. Avant d’effacer les données de Chrome ou de changer de téléphone, utiliser **Sauvegarder ce projet** pour obtenir un fichier `.stomo`.
+Pour commencer, touche **Nouveau film**, donne-lui un titre et prends une
+première photo. Les projets sont enregistrés automatiquement dans le
+navigateur.
 
-Les nouveaux films utilisent la caméra arrière et le retardateur de 2 secondes.
-Ils sont enregistrés en Full HD, en paysage (1920 × 1080) ou en vertical
-(1080 × 1920). La touche lecture/pause d’un casque filaire ou Bluetooth peut
-servir de déclencheur après activation dans les réglages du film.
+## Installer sur un téléphone
 
-Le titre, le sens et la vitesse appartiennent au film. La caméra, le
-retardateur, la grille, l’aperçu automatique et les images fantômes sont des
-habitudes communes : un changement s’applique aux films suivants sans modifier
-leur date. Lors de la première mise à jour, Stomo reprend ces habitudes depuis
-le film utilisé le plus récemment.
+### Android
 
-Après chaque photo, Stomo confirme l’enregistrement puis rejoue une fois les
-quatre dernières images si cette aide est activée. La lecture complète tourne
-en boucle et commence par un carton noir portant le titre du film. Ce même
-carton ouvre la vidéo exportée pendant deux secondes.
+1. Ouvrir Stomo dans Chrome ou Samsung Internet.
+2. Choisir **Ajouter à l’écran d’accueil** dans le menu du navigateur.
+3. Ouvrir Stomo depuis sa nouvelle icône.
 
-Stomo accepte jusqu’à **480 photos**. Pour ménager la mémoire des anciens
-téléphones, les originaux restent dans IndexedDB, seules les petites vignettes
-sont chargées dans la frise et les exports sont préparés image par image. À
-partir de 400 photos, l’application avertit l’enfant et vérifie régulièrement
-l’espace disponible.
+### iPhone ou iPad
 
-## Session enfant et épinglage Android
+1. Ouvrir Stomo dans Safari.
+2. Toucher **Partager**, puis **Sur l’écran d’accueil**.
+3. Ouvrir Stomo depuis sa nouvelle icône.
 
-Stomo ne peut pas empêcher Android de fermer une page web. La protection associe donc deux mécanismes :
+Après une première ouverture complète, Stomo peut redémarrer en mode avion.
+Avant d’effacer les données du navigateur ou de changer de téléphone, utiliser
+**Garder mon projet** pour obtenir un fichier `.stomo` contenant les photos et
+les réglages.
 
-- **Épinglage de l’écran Android** : l’adulte l’active dans les réglages de sécurité du téléphone, démarre une session enfant dans Stomo, puis épingle l’application depuis l’écran des applications récentes. Le nom exact du réglage varie selon la version Samsung.
-- **Journal Stomo** : pendant une session, toute disparition de l’application laisse une alerte persistante et une ligne horodatée dans le journal. Le code adulte est nécessaire pour valider les alertes, terminer la session ou effacer le journal.
+Les projets créés avec l’adresse de développement ne sont pas transférés
+automatiquement vers l’adresse GitHub Pages. Il faut les exporter en `.stomo`,
+puis les rouvrir dans la version publiée.
 
-L’enfant conserve l’accès à toutes les fonctions créatives et aux téléchargements. Le code ne verrouille aucune fonction de création.
+## Compatibilité
 
-## Développement
+| Téléphone ou tablette | Version prise en charge |
+| --- | --- |
+| Chrome sur Android | Chrome 101 et versions suivantes |
+| Samsung Internet | Version 18 et versions suivantes |
+| Safari sur iPhone et iPad | iOS/iPadOS 17.4 et versions suivantes |
+| Autres navigateurs | Essai possible, sans garantie d’installation ou de vidéo |
+
+Le Galaxy A5 sous Android 7 et Chrome 101 reste l’appareil de référence
+minimal. Stomo conserve pour lui des traitements image par image, une frise
+virtualisée et de petits caches de lecture. Les optimisations absentes sur un
+ancien navigateur ont toujours un chemin de repli.
+
+La vidéo est un WebM VP8 muet. Safari sait lire ce format complètement à partir
+d’iOS/iPadOS 17.4. Le plein écran, le partage de fichier et le bouton d’un
+casque sont proposés uniquement lorsqu’ils sont disponibles.
+
+Un film peut contenir 480 photos. Stomo avertit à partir de 400 et surveille
+l’espace restant sans envoyer cette information ailleurs.
+
+## Développer
 
 Prérequis : Node 22 et npm 11.
 
@@ -51,61 +66,73 @@ npm install
 npm run dev
 ```
 
-### Caméra sur un téléphone pendant le développement
+Le serveur utilise toujours le port `4175`. Garder le même protocole, le même
+nom d’hôte et le même port permet de retrouver les projets stockés pendant le
+développement.
 
-Chrome autorise la caméra et le code adulte seulement dans une page sécurisée
-(`HTTPS`) ou sur `localhost`. Un simple `http://192.168…` affiche donc une
-explication dans Stomo au lieu de demander la caméra.
+La caméra exige HTTPS ou `localhost`. Pour tester par USB sur Android :
 
-Pour travailler en HTTPS sur le Wi-Fi :
+```bash
+adb reverse tcp:4175 tcp:4175
+npm run dev
+```
 
-1. installer `mkcert` sur le Mac (`brew install mkcert`) ;
-2. lancer `npm run cert:dev`, qui inclut les adresses IP locales dans le
-   certificat ;
-3. copier l’autorité racine indiquée par `mkcert -CAROOT` sur le Galaxy A5 ;
-4. dans Android 7, ouvrir **Réglages → Écran verrouillage/Sécurité → Autres
-   paramètres de sécurité → Installer depuis stockage**, puis installer cette
-   autorité temporaire ;
-5. lancer `npm run dev:https` et ouvrir l’adresse `https://192.168…:4175`
-   affichée par Vite.
+Puis ouvrir `http://localhost:4175` sur le téléphone.
 
-Retirer cette autorité du téléphone après les essais. Sans certificat, une
-alternative simple est la liaison USB : activer le débogage USB, lancer
-`adb reverse tcp:4175 tcp:4175`, puis ouvrir `http://localhost:4175` sur le
-téléphone pendant que `npm run dev` tourne sur le Mac.
+Pour tester en HTTPS sur le réseau local :
 
-Le port de développement est volontairement fixé à **4175** : Vite s’arrête
-s’il est occupé au lieu de changer silencieusement d’origine. Pour retrouver
-les mêmes projets, conserve aussi le même protocole et le même nom d’hôte ; la
-liaison USB avec `localhost:4175` est la solution la plus stable.
+```bash
+npm run cert:dev
+npm run dev:https
+```
 
-Les commandes de contrôle sont :
+`cert:dev` utilise `mkcert` et inclut les adresses IP locales. Sur Android 7,
+l’autorité locale indiquée par `mkcert -CAROOT` doit être installée
+temporairement dans les réglages de sécurité, puis retirée après les essais.
+
+Commandes utiles :
 
 ```bash
 npm run lint
 npm test
-npm run build
 npm run check
+npx playwright install chromium webkit
+npm run test:e2e
 ```
 
-Le build cible Chrome 101. La variable `VITE_BASE` permet de construire pour un sous-chemin GitHub Pages :
+`npm run test:e2e` construit la version `/stomo/` et vérifie Chromium et
+WebKit aux dimensions du Galaxy A5, d’un Android récent, d’un iPhone et d’un
+iPad.
+
+## Publier
+
+Le workflow GitHub Pages vérifie le code, les tests, le fonctionnement hors
+ligne et les formats mobiles avant de publier `dist`.
+
+1. Créer un dépôt public nommé `stomo`.
+2. Ajouter ce dépôt comme remote `origin` et pousser `main`.
+3. Dans **Settings → Pages**, choisir **GitHub Actions** comme source.
+4. Attendre la fin du workflow **Vérifier et publier Stomo**.
+5. Installer la version publiée sur les appareils de recette et la rouvrir en
+   mode avion.
+
+Le build Pages peut aussi être produit localement avec :
 
 ```bash
-VITE_BASE=/nom-du-depot/ npm run build
+npm run build:pages
 ```
 
-## Publication GitHub Pages
+La première release reste en version bêta `0.1.0` tant que les recettes
+physiques Galaxy A5 et iPhone ne sont pas terminées.
 
-Le workflow `.github/workflows/pages.yml` vérifie le code, exécute les tests, construit le site avec le sous-chemin du dépôt puis publie `dist`. Dans les paramètres du dépôt GitHub, choisir **Pages → Source → GitHub Actions**.
-
-## Formats
+## Fichiers produits
 
 - JPEG : une photo choisie ;
-- ZIP : toutes les photos JPEG numérotées et `informations.txt` ;
-- WebM VP8 : film muet ;
-- `.stomo` v2 : archive versionnée contenant les images WebP originales, leurs
-  vignettes et les réglages propres au film. Les préférences de prise de vue du
-  téléphone ne sont pas remplacées lors d’un import. Les sauvegardes v1 restent
-  importables.
+- ZIP : toutes les photos JPEG numérotées ;
+- WebM VP8 : le film Full HD avec son carton-titre ;
+- `.stomo` v2 : le projet complet, ses images WebP, ses vignettes et ses
+  réglages.
 
-Les détails sur les projets ayant inspiré Stomo sont dans [ATTRIBUTIONS.md](./ATTRIBUTIONS.md).
+Stomo n’utilise ni compte, ni suivi d’usage, ni serveur de données. Voir
+[PRIVACY.md](./PRIVACY.md), [CONTRIBUTING.md](./CONTRIBUTING.md) et
+[ATTRIBUTIONS.md](./ATTRIBUTIONS.md).

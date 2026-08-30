@@ -7,6 +7,11 @@ import { defineConfig } from "vitest/config";
 const httpsRequested = process.env.STOMO_HTTPS === "1";
 const certificateFile = resolve(".cert/stomo.pem");
 const certificateKeyFile = resolve(".cert/stomo-key.pem");
+const siteUrl =
+  `${process.env.VITE_SITE_URL || "https://dcfvg.github.io/stomo/"}`.replace(
+    /\/?$/,
+    "/",
+  );
 
 if (
   httpsRequested &&
@@ -18,11 +23,25 @@ if (
 export default defineConfig({
   base: process.env.VITE_BASE || "/",
   plugins: [
+    {
+      name: "stomo-site-metadata",
+      transformIndexHtml(html) {
+        return html.replaceAll("__STOMO_SITE_URL__", siteUrl);
+      },
+    },
     react(),
     VitePWA({
-      registerType: "autoUpdate",
-      includeAssets: ["favicon.svg", "icon-192.png", "icon-512.png"],
+      registerType: "prompt",
+      injectRegister: false,
+      includeAssets: [
+        "favicon.svg",
+        "icon-180.png",
+        "icon-192.png",
+        "icon-512.png",
+        "icon-maskable-512.png",
+      ],
       manifest: {
+        id: ".",
         name: "Stomo — mon studio d’animation",
         short_name: "Stomo",
         description: "Crée des films image par image sur ton téléphone.",
@@ -47,7 +66,7 @@ export default defineConfig({
             purpose: "any",
           },
           {
-            src: "icon-512.png",
+            src: "icon-maskable-512.png",
             sizes: "512x512",
             type: "image/png",
             purpose: "maskable",
@@ -58,6 +77,7 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,svg,png,woff2,webmanifest}"],
         globIgnores: ["social-card.png"],
         navigateFallback: "index.html",
+        cleanupOutdatedCaches: true,
       },
     }),
   ],
@@ -77,10 +97,11 @@ export default defineConfig({
     port: 4175,
     strictPort: true,
   },
-  build: { target: "chrome101" },
+  build: { target: "es2020" },
   test: {
     environment: "jsdom",
     setupFiles: ["src/test/setup.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
     css: true,
   },
 });

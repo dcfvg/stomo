@@ -8,6 +8,7 @@ import {
   RiShieldStarLine,
 } from "@remixicon/react";
 import { useState } from "react";
+import { canUseFullscreen, isStandaloneApp } from "../lib/capabilities";
 import type { SessionEvent } from "../types";
 import { Dialog } from "./Dialog";
 
@@ -82,6 +83,7 @@ export function SessionUi({
   onEnd,
   onClear,
 }: SessionUiProps) {
+  const fullscreenAvailable = canUseFullscreen();
   const [showStart, setShowStart] = useState(false);
   const [showJournal, setShowJournal] = useState(false);
   const [protectedAction, setProtectedAction] =
@@ -155,7 +157,7 @@ export function SessionUi({
                 <span>{session.unacknowledgedEvents}</span>
               )}
             </button>
-            {!fullscreenActive && document.fullscreenEnabled && (
+            {!fullscreenActive && fullscreenAvailable && (
               <button
                 className="compact-action compact-action--fullscreen"
                 type="button"
@@ -175,20 +177,18 @@ export function SessionUi({
           </>
         ) : (
           <>
-            {!fullscreenActive &&
-              document.fullscreenEnabled &&
-              !window.matchMedia?.("(display-mode: standalone)").matches && (
-                <button
-                  className="compact-action compact-action--fullscreen"
-                  type="button"
-                  onClick={() => void onEnterFullscreen()}
-                  aria-label="Passer en plein écran"
-                  title="Plein écran"
-                >
-                  <RiFullscreenLine aria-hidden="true" />
-                  <span>Plein écran</span>
-                </button>
-              )}
+            {!fullscreenActive && fullscreenAvailable && !isStandaloneApp() && (
+              <button
+                className="compact-action compact-action--fullscreen"
+                type="button"
+                onClick={() => void onEnterFullscreen()}
+                aria-label="Passer en plein écran"
+                title="Plein écran"
+              >
+                <RiFullscreenLine aria-hidden="true" />
+                <span>Plein écran</span>
+              </button>
+            )}
             <button
               className="session-state"
               type="button"

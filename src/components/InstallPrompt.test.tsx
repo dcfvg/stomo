@@ -21,7 +21,7 @@ describe("proposition d’installation", () => {
   afterEach(cleanup);
 
   beforeEach(() => {
-    localStorage.clear();
+    delete (navigator as Navigator & { standalone?: boolean }).standalone;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockReturnValue({ matches: false }),
@@ -33,6 +33,18 @@ describe("proposition d’installation", () => {
     render(<InstallPrompt />);
     await user.click(screen.getByRole("button", { name: "Comment installer" }));
     expect(screen.getByText(/Ajouter à l’écran d’accueil/)).toBeInTheDocument();
+  });
+
+  it("donne le chemin du menu Partager sur iPhone et iPad", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, "standalone", {
+      configurable: true,
+      value: false,
+    });
+    render(<InstallPrompt />);
+    await user.click(screen.getByRole("button", { name: "Comment installer" }));
+
+    expect(screen.getByText(/Touche Partager/)).toBeInTheDocument();
   });
 
   it("propose puis déclenche l’installation fournie par Chrome", async () => {

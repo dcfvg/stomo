@@ -32,6 +32,7 @@ import { framesToWebm } from "./webm";
 import { createExportFileSink } from "./exportSink";
 import { MAX_FRAMES } from "../config";
 import { renderTitleCard } from "./titleCard";
+import { canSharePreparedFile } from "../lib/capabilities";
 
 type ExportFrame = FrameSummary | FrameRecord;
 export type ExportUpdate = (
@@ -39,6 +40,11 @@ export type ExportUpdate = (
   total: number,
   label?: string,
 ) => void;
+export type FileDeliveryResult =
+  | "downloaded"
+  | "needs-action"
+  | "shared"
+  | "cancelled";
 
 function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted)
@@ -74,6 +80,34 @@ export function downloadBlob(blob: Blob, fileName: string) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+function preparedFile(blob: Blob, fileName: string) {
+  return new File([blob], fileName, {
+    type: blob.type || "application/octet-stream",
+    lastModified: Date.now(),
+  });
+}
+
+export async function deliverPreparedFile(
+  file: File,
+  shareNow = false,
+): Promise<FileDeliveryResult> {
+  if (canSharePreparedFile(file)) {
+    if (!shareNow) return "needs-action";
+    try {
+      await navigator.share({
+        files: [file],
+        title: file.name,
+      });
+      return "shared";
+    } catch (error) {
+      if ((error as { name?: string })?.name === "AbortError")
+        return "cancelled";
+    }
+  }
+  downloadBlob(file, file.name);
+  return "downloaded";
+}
+
 export async function exportSelectedPhoto(
   project: ProjectRecord,
   frame: ExportFrame,
@@ -84,7 +118,7 @@ export async function exportSelectedPhoto(
     project.height,
   );
   const number = String(frame.position + 1).padStart(3, "0");
-  downloadBlob(jpeg, `${safeFileName(project.name)}_${number}.jpg`);
+  return preparedFile(jpeg, `${safeFileName(project.name)}_${number}.jpg`);
 }
 
 function projectInformation(project: ProjectRecord, frameCount: number) {
@@ -148,8 +182,7 @@ export async function exportPhotosZip(
   if (!sink) {
     const archive = await buildPhotosZip(project, frames, onProgress, signal);
     throwIfAborted(signal);
-    downloadBlob(archive, fileName);
-    return;
+    return preparedFile(archive, fileName);
   }
   const root = `${safeFileName(project.name)}_photos`;
   const writer = new ZipWriter(sink.writable);
@@ -176,8 +209,9 @@ export async function exportPhotosZip(
     );
     await writer.close();
     throwIfAborted(signal);
-    downloadBlob(await sink.finish(), fileName);
+    const completed = preparedFile(await sink.finish(), fileName);
     window.setTimeout(() => void sink.discard(), 60_000);
+    return completed;
   } catch (error) {
     await writer.close().catch(() => undefined);
     await sink.discard();
@@ -218,15 +252,15 @@ export async function exportVideo(
   const fileName = `${safeFileName(project.name)}.webm`;
   const sink = await createExportFileSink(fileName).catch(() => null);
   if (!sink) {
-    downloadBlob(video, fileName);
-    return;
+    return preparedFile(video, fileName);
   }
   try {
     const writable = sink.writable.getWriter();
     await writable.write(video);
     await writable.close();
-    downloadBlob(await sink.finish(), fileName);
+    const completed = preparedFile(await sink.finish(), fileName);
     window.setTimeout(() => void sink.discard(), 60_000);
+    return completed;
   } catch (error) {
     await sink.discard();
     throw error;
@@ -317,8 +351,7 @@ export async function exportProject(
       signal,
     );
     throwIfAborted(signal);
-    downloadBlob(archive, fileName);
-    return;
+    return preparedFile(archive, fileName);
   }
   if (frames.length !== project.frameCount)
     throw new Error(
@@ -373,8 +406,9 @@ export async function exportProject(
     }
     await writer.close();
     throwIfAborted(signal);
-    downloadBlob(await sink.finish(), fileName);
+    const completed = preparedFile(await sink.finish(), fileName);
     window.setTimeout(() => void sink.discard(), 60_000);
+    return completed;
   } catch (error) {
     await writer.close().catch(() => undefined);
     await sink.discard();

@@ -1,5 +1,6 @@
 import type { FilmOrientation } from "../types";
 import { CAPTURE_WEBP_QUALITY } from "../config";
+import { canUseImageWorker } from "../lib/capabilities";
 
 export const FULL_HD = {
   landscape: { width: 1920, height: 1080 },
@@ -69,14 +70,6 @@ const workerRequests = new Map<
   number,
   { resolve: (value: unknown) => void; reject: (reason: unknown) => void }
 >();
-
-function canUseImageWorker() {
-  return (
-    typeof Worker === "function" &&
-    typeof OffscreenCanvas === "function" &&
-    typeof createImageBitmap === "function"
-  );
-}
 
 function getImageWorker() {
   if (imageWorker) return imageWorker;

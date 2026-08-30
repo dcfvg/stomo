@@ -1,6 +1,7 @@
 import "@fontsource-variable/lexend";
 import { RiSparklingFill } from "@remixicon/react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { registerSW } from "virtual:pwa-register";
 import { Home } from "./components/Home";
 import { InstallPrompt } from "./components/InstallPrompt";
 import { SessionUi } from "./components/SessionUi";
@@ -12,10 +13,35 @@ import { cleanupStaleExportFiles } from "./media/exportSink";
 export default function App() {
   const { project, loading, initialize } = useStomoStore();
   const childSession = useChildSession();
+  const projectRef = useRef(project);
+  const pendingUpdateRef = useRef<null | (() => Promise<void>)>(null);
+
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
 
   useEffect(() => {
     void initialize();
   }, [initialize]);
+
+  useEffect(() => {
+    const updateServiceWorker = registerSW({
+      immediate: true,
+      onNeedRefresh: () => {
+        const applyUpdate = () =>
+          updateServiceWorker(true).then(() => undefined);
+        if (projectRef.current) pendingUpdateRef.current = applyUpdate;
+        else void applyUpdate();
+      },
+    });
+  }, []);
+
+  useEffect(() => {
+    if (project || !pendingUpdateRef.current) return;
+    const applyUpdate = pendingUpdateRef.current;
+    pendingUpdateRef.current = null;
+    void applyUpdate();
+  }, [project]);
 
   useEffect(() => {
     void cleanupStaleExportFiles();

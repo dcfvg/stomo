@@ -16,6 +16,7 @@ export default tseslint.config(
     languageOptions: {
       globals: {
         window: "readonly",
+        process: "readonly",
         document: "readonly",
         navigator: "readonly",
         localStorage: "readonly",
@@ -30,6 +31,17 @@ export default tseslint.config(
         clearTimeout: "readonly",
         setInterval: "readonly",
         clearInterval: "readonly",
+      },
+    },
+  },
+  {
+    files: ["e2e/**/*.ts", "playwright.config.ts"],
+    languageOptions: {
+      globals: {
+        URL: "readonly",
+        document: "readonly",
+        navigator: "readonly",
+        process: "readonly",
       },
     },
   },

@@ -6,7 +6,7 @@ import {
   ZipReader,
   ZipWriter,
 } from "@zip.js/zip.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FrameRecord, ProjectRecord } from "../types";
 
 vi.mock("./images", () => ({
@@ -30,6 +30,7 @@ vi.mock("./webm", () => ({
 import {
   buildPhotosZip,
   buildProjectArchive,
+  deliverPreparedFile,
   exportVideo,
   importProject,
   safeFileName,
@@ -69,6 +70,12 @@ async function entries(blob: Blob) {
 
 describe("téléchargements", () => {
   beforeEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (navigator as Navigator & { standalone?: boolean }).standalone;
+    delete (navigator as unknown as { share?: unknown }).share;
+    delete (navigator as unknown as { canShare?: unknown }).canShare;
+  });
 
   it("nettoie les noms pour Android", () => {
     expect(safeFileName(project.name)).toBe("l-epopee-des-dinos");
@@ -223,7 +230,11 @@ describe("téléchargements", () => {
       () => undefined,
     );
     const update = vi.fn();
-    await exportVideo({ ...project, frameCount: 2 }, frames(2), update);
+    const video = await exportVideo(
+      { ...project, frameCount: 2 },
+      frames(2),
+      update,
+    );
 
     expect(renderTitleCard).toHaveBeenCalledWith(project.name, 1920, 1080);
     expect(update).toHaveBeenCalledWith(0, 2, "J’ajoute le titre");
@@ -231,6 +242,41 @@ describe("téléchargements", () => {
     expect(vi.mocked(framesToWebm).mock.calls[0][6]).toMatchObject({
       leadIn: { durationMs: 2_000 },
     });
+    expect(video).toBeInstanceOf(File);
+    expect(video.name).toBe("l-epopee-des-dinos.webm");
+  });
+
+  it("attend un toucher avant d’ouvrir le partage Apple", async () => {
+    const share = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperties(navigator, {
+      standalone: { configurable: true, value: false },
+      share: { configurable: true, value: share },
+      canShare: {
+        configurable: true,
+        value: vi.fn().mockReturnValue(true),
+      },
+    });
+    const file = new File(["film"], "film.webm", { type: "video/webm" });
+
+    await expect(deliverPreparedFile(file)).resolves.toBe("needs-action");
+    expect(share).not.toHaveBeenCalled();
+    await expect(deliverPreparedFile(file, true)).resolves.toBe("shared");
+    expect(share).toHaveBeenCalledWith({
+      files: [file],
+      title: "film.webm",
+    });
+  });
+
+  it("télécharge directement lorsque le partage de fichier manque", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:photo");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    const file = new File(["photo"], "photo.jpg", { type: "image/jpeg" });
+
+    await expect(deliverPreparedFile(file)).resolves.toBe("downloaded");
+    expect(click).toHaveBeenCalledOnce();
   });
 
   it("arrête un ZIP avant de convertir la photo suivante", async () => {

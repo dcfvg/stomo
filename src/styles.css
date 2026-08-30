@@ -522,6 +522,7 @@ svg {
   place-items: center;
   padding: 18px;
   background: rgba(13, 15, 17, 0.74);
+  -webkit-backdrop-filter: blur(5px);
   backdrop-filter: blur(5px);
 }
 .dialog {
@@ -1091,6 +1092,7 @@ svg {
   color: #fff;
   font-size: 0.75rem;
   font-weight: 700;
+  -webkit-backdrop-filter: blur(5px);
   backdrop-filter: blur(5px);
 }
 .tool-button svg {
@@ -1291,6 +1293,7 @@ svg {
   padding: 10px;
   border-top: 2px solid rgba(255, 255, 255, 0.55);
   background: rgba(17, 19, 21, 0.96);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }
 .timeline-panel__close {
@@ -1738,6 +1741,41 @@ svg {
 .cancel-export-button svg {
   width: 22px;
   height: 22px;
+}
+.ready-file-overlay {
+  z-index: 160;
+}
+.ready-file-button,
+.ready-file-later {
+  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 18px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  font-weight: 700;
+}
+.ready-file-button {
+  background: var(--yellow);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.ready-file-later {
+  min-height: 44px;
+  border-color: transparent;
+  background: transparent;
+}
+.ready-file-button svg {
+  width: 22px;
+  height: 22px;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .dialog__content input:not([type="range"]),
+  .dialog__content select {
+    font-size: 1rem;
+  }
 }
 
 @media (max-width: 800px) {

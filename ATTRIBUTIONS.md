@@ -1,5 +1,8 @@
 # Attributions
 
+Stomo est distribué sous licence GNU Affero General Public License v3.0
+uniquement (`AGPL-3.0-only`).
+
 Stomo a été conçu à partir des besoins de ce projet et s’inspire notamment de :
 
 - [Stop Motion de Sam Zager](https://github.com/szager/stop-motion), pour le principe d’un studio de stop motion web hors ligne et l’export WebM. Le projet est distribué sous licence 0BSD.

@@ -145,7 +145,10 @@ export const SmoothPlayback = forwardRef<
         const previousImage = imageRefs.current[activeLayer.current];
         if (!nextImage) return;
         nextImage.src = entry.url;
-        nextImage.alt = `Photo ${frame.position + 1} du film`;
+        nextImage.alt =
+          frame.position < 0
+            ? "Titre du film"
+            : `Photo ${frame.position + 1} du film`;
         if (typeof nextImage.decode === "function") {
           try {
             await nextImage.decode();

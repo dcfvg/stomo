@@ -16,6 +16,11 @@ Ils sont enregistrés en Full HD, en paysage (1920 × 1080) ou en vertical
 (1080 × 1920). La touche lecture/pause d’un casque filaire ou Bluetooth peut
 servir de déclencheur après activation dans les réglages du film.
 
+Après chaque photo, Stomo confirme l’enregistrement puis rejoue une fois les
+quatre dernières images si cette aide est activée. La lecture complète tourne
+en boucle et commence par un carton noir portant le titre du film. Ce même
+carton ouvre la vidéo exportée pendant deux secondes.
+
 Stomo accepte jusqu’à **480 photos**. Pour ménager la mémoire des anciens
 téléphones, les originaux restent dans IndexedDB, seules les petites vignettes
 sont chargées dans la frise et les exports sont préparés image par image. À

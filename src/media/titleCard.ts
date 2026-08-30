@@ -62,6 +62,27 @@ export function wrapTitleText(
   return lines.length ? lines : ["Mon film"];
 }
 
+function compactToThreeLines(sourceLines: string[]) {
+  const lines = [...sourceLines];
+  while (lines.length > 3) {
+    let shortestPairIndex = 0;
+    let shortestPairLength = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < lines.length - 1; index += 1) {
+      const pairLength = lines[index].length + lines[index + 1].length;
+      if (pairLength < shortestPairLength) {
+        shortestPairLength = pairLength;
+        shortestPairIndex = index;
+      }
+    }
+    lines.splice(
+      shortestPairIndex,
+      2,
+      `${lines[shortestPairIndex]} ${lines[shortestPairIndex + 1]}`,
+    );
+  }
+  return lines;
+}
+
 export async function renderTitleCard(
   title: string,
   width: number,
@@ -76,10 +97,7 @@ export async function renderTitleCard(
   const safeTitle = title.trim().slice(0, 60) || "Mon film";
   const maxWidth = width * 0.8;
   const maxTextHeight = height * 0.6;
-  const minimumFontSize = Math.max(
-    48,
-    Math.floor(Math.min(width, height) * 0.05),
-  );
+  const minimumFontSize = 12;
   let fontSize = Math.min(
     200,
     Math.floor(Math.min(width * 0.13, height * 0.18)),
@@ -89,7 +107,7 @@ export async function renderTitleCard(
     .catch(() => undefined);
 
   let lines: string[] = [];
-  while (fontSize >= minimumFontSize) {
+  while (fontSize > minimumFontSize) {
     context.font = `700 ${fontSize}px ${TITLE_FONT}`;
     lines = wrapTitleText(
       safeTitle,
@@ -101,6 +119,14 @@ export async function renderTitleCard(
     fontSize -= 4;
   }
 
+  context.font = `700 ${fontSize}px ${TITLE_FONT}`;
+  lines = wrapTitleText(
+    safeTitle,
+    (value) => context.measureText(value).width,
+    maxWidth,
+  );
+  lines = compactToThreeLines(lines);
+
   context.fillStyle = TITLE_BACKGROUND;
   context.fillRect(0, 0, width, height);
   context.fillStyle = TITLE_FOREGROUND;
@@ -109,11 +135,9 @@ export async function renderTitleCard(
   context.textBaseline = "middle";
   const lineHeight = fontSize * 1.18;
   const firstLineY = height / 2 - ((lines.length - 1) * lineHeight) / 2;
-  lines
-    .slice(0, 3)
-    .forEach((line, index) =>
-      context.fillText(line, width / 2, firstLineY + index * lineHeight),
-    );
+  lines.forEach((line, index) =>
+    context.fillText(line, width / 2, firstLineY + index * lineHeight),
+  );
 
   const blob = await canvasBlob(canvas);
   canvas.width = 1;

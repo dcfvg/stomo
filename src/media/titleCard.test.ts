@@ -39,10 +39,11 @@ describe("carton-titre", () => {
       (callback, type) => callback(new Blob(["title"], { type: type ?? "" })),
     );
 
-    const blob = await renderTitleCard("La fusée de Zoé", width, height);
+    const blob = await renderTitleCard("É".repeat(60), width, height);
 
     expect(blob.type).toBe("image/webp");
     expect(fillRect).toHaveBeenCalledWith(0, 0, width, height);
     expect(fillText).toHaveBeenCalled();
+    expect(fillText.mock.calls.length).toBeLessThanOrEqual(3);
   });
 });

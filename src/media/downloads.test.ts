@@ -68,6 +68,11 @@ async function entries(blob: Blob) {
   return result;
 }
 
+async function stomoFile(blob: Blob, name: string) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  return new File([bytes], name, { type: "application/x-stomo" });
+}
+
 describe("téléchargements", () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => {
@@ -107,9 +112,8 @@ describe("téléchargements", () => {
       originalFrames,
       () => undefined,
     );
-    const file = new File([archive], "dinos.stomo", {
-      type: "application/x-stomo",
-    });
+    const file = await stomoFile(archive, "dinos.stomo");
+    expect(file.size).toBe(archive.size);
     const imported = await importProject(file, () => undefined);
 
     expect(imported.project.id).not.toBe(project.id);
@@ -192,10 +196,9 @@ describe("téléchargements", () => {
     );
     const archive = await writer.close();
 
-    const imported = await importProject(
-      new File([archive], "ancien.stomo"),
-      () => undefined,
-    );
+    const file = await stomoFile(archive, "ancien.stomo");
+    expect(file.size).toBe(archive.size);
+    const imported = await importProject(file, () => undefined);
 
     expect(imported.project).toMatchObject({
       name: "Ancien film (importé)",

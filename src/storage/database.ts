@@ -1,11 +1,14 @@
 import type {
   ChildSessionRecord,
+  CountdownSeconds,
   FilmOrientation,
   FrameMediaRecord,
   FrameRecord,
   FrameSummary,
+  OnionFrameCount,
   ProjectRecord,
   SessionEvent,
+  ShootingPreferences,
 } from "../types";
 import { createId } from "../lib/ids";
 import { MAX_FRAMES } from "../config";
@@ -18,6 +21,7 @@ const FRAME_MEDIA = "frame-media";
 const SETTINGS = "settings";
 const EVENTS = "session-events";
 const CHILD_SESSION_KEY = "child-session";
+const SHOOTING_PREFERENCES_KEY = "shooting-preferences";
 
 type StoredSetting<T> = { key: string; value: T };
 
@@ -116,6 +120,53 @@ export function openDatabase() {
 
 const COUNTDOWNS = new Set([0, 1, 2, 3, 5]);
 const ONION_FRAME_COUNTS = new Set([1, 2, 3]);
+const FRAME_RATES = new Set([4, 6, 8, 10, 12]);
+
+type LegacyProjectPreferences = Partial<ShootingPreferences> & {
+  autoPreviewLoops?: number;
+  updatedAt?: number;
+};
+
+export const DEFAULT_SHOOTING_PREFERENCES: ShootingPreferences = {
+  countdownSeconds: 2,
+  onionOpacity: 0.4,
+  onionFrameCount: 2,
+  autoPreviewEnabled: true,
+  gridEnabled: false,
+  cameraFacing: "environment",
+  cameraDeviceId: null,
+};
+
+export function normalizeShootingPreferences(
+  preferences?: LegacyProjectPreferences,
+): ShootingPreferences {
+  const opacity = Number(preferences?.onionOpacity);
+  return {
+    countdownSeconds: COUNTDOWNS.has(preferences?.countdownSeconds as number)
+      ? (preferences?.countdownSeconds as CountdownSeconds)
+      : DEFAULT_SHOOTING_PREFERENCES.countdownSeconds,
+    onionOpacity: Number.isFinite(opacity)
+      ? Math.max(0, Math.min(0.7, opacity))
+      : DEFAULT_SHOOTING_PREFERENCES.onionOpacity,
+    onionFrameCount: ONION_FRAME_COUNTS.has(
+      preferences?.onionFrameCount as number,
+    )
+      ? (preferences?.onionFrameCount as OnionFrameCount)
+      : DEFAULT_SHOOTING_PREFERENCES.onionFrameCount,
+    autoPreviewEnabled:
+      typeof preferences?.autoPreviewEnabled === "boolean"
+        ? preferences.autoPreviewEnabled
+        : preferences?.autoPreviewLoops === undefined
+          ? DEFAULT_SHOOTING_PREFERENCES.autoPreviewEnabled
+          : preferences.autoPreviewLoops > 0,
+    gridEnabled: Boolean(preferences?.gridEnabled),
+    cameraFacing: preferences?.cameraFacing === "user" ? "user" : "environment",
+    cameraDeviceId:
+      typeof preferences?.cameraDeviceId === "string"
+        ? preferences.cameraDeviceId
+        : null,
+  };
+}
 
 export function normalizeProjectRecord(project: ProjectRecord): ProjectRecord {
   const orientation: FilmOrientation =
@@ -125,24 +176,14 @@ export function normalizeProjectRecord(project: ProjectRecord): ProjectRecord {
         ? "portrait"
         : "landscape";
   return {
-    ...project,
+    id: project.id,
     name: project.name.trim().slice(0, 60) || "Mon nouveau film",
-    countdownSeconds: COUNTDOWNS.has(project.countdownSeconds)
-      ? project.countdownSeconds
-      : 2,
-    onionFrameCount: ONION_FRAME_COUNTS.has(project.onionFrameCount)
-      ? project.onionFrameCount
-      : 2,
-    autoPreviewFrames: 4,
-    autoPreviewLoops: project.autoPreviewLoops === 0 ? 0 : 1,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    fps: FRAME_RATES.has(project.fps) ? project.fps : 8,
     width: orientation === "portrait" ? 1080 : 1920,
     height: orientation === "portrait" ? 1920 : 1080,
-    gridEnabled: Boolean(project.gridEnabled),
-    cameraFacing: project.cameraFacing === "user" ? "user" : "environment",
-    cameraDeviceId:
-      typeof project.cameraDeviceId === "string"
-        ? project.cameraDeviceId
-        : null,
+    frameCount: Math.max(0, Number(project.frameCount) || 0),
     orientation,
   };
 }
@@ -158,17 +199,9 @@ export async function createProject(
     createdAt: now,
     updatedAt: now,
     fps: 8,
-    countdownSeconds: 2,
-    onionOpacity: 0.4,
-    onionFrameCount: 2,
-    autoPreviewFrames: 4,
-    autoPreviewLoops: 1,
     width: orientation === "portrait" ? 1080 : 1920,
     height: orientation === "portrait" ? 1920 : 1080,
     frameCount: 0,
-    gridEnabled: false,
-    cameraFacing: "environment",
-    cameraDeviceId: null,
     orientation,
   };
   const database = await openDatabase();
@@ -208,6 +241,46 @@ export async function saveProject(project: ProjectRecord) {
   const database = await openDatabase();
   const transaction = database.transaction(PROJECTS, "readwrite");
   transaction.objectStore(PROJECTS).put(normalizeProjectRecord(project));
+  await transactionFinished(transaction);
+}
+
+export async function getShootingPreferences() {
+  const database = await openDatabase();
+  const settingsTransaction = database.transaction(SETTINGS, "readonly");
+  const stored = await requestResult(
+    settingsTransaction
+      .objectStore(SETTINGS)
+      .get(SHOOTING_PREFERENCES_KEY) as IDBRequest<
+      StoredSetting<ShootingPreferences> | undefined
+    >,
+  );
+  await transactionFinished(settingsTransaction);
+  if (stored) return normalizeShootingPreferences(stored.value);
+
+  const projectsTransaction = database.transaction(PROJECTS, "readonly");
+  const legacyProjects = await requestResult(
+    projectsTransaction.objectStore(PROJECTS).getAll() as IDBRequest<
+      Array<ProjectRecord & LegacyProjectPreferences>
+    >,
+  );
+  await transactionFinished(projectsTransaction);
+  const latestProject = legacyProjects.sort(
+    (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
+  )[0];
+  const preferences = normalizeShootingPreferences(latestProject);
+  await saveShootingPreferences(preferences);
+  return preferences;
+}
+
+export async function saveShootingPreferences(
+  preferences: ShootingPreferences,
+) {
+  const database = await openDatabase();
+  const transaction = database.transaction(SETTINGS, "readwrite");
+  transaction.objectStore(SETTINGS).put({
+    key: SHOOTING_PREFERENCES_KEY,
+    value: normalizeShootingPreferences(preferences),
+  });
   await transactionFinished(transaction);
 }
 

@@ -4,23 +4,25 @@ export type FilmOrientation = "landscape" | "portrait";
 export type AutoPreviewLoops = 0 | 1 | 2 | 3 | 4;
 export type OnionFrameCount = 1 | 2 | 3;
 
+export interface ShootingPreferences {
+  countdownSeconds: CountdownSeconds;
+  onionOpacity: number;
+  onionFrameCount: OnionFrameCount;
+  autoPreviewEnabled: boolean;
+  gridEnabled: boolean;
+  cameraFacing: "environment" | "user";
+  cameraDeviceId: string | null;
+}
+
 export interface ProjectRecord {
   id: string;
   name: string;
   createdAt: number;
   updatedAt: number;
   fps: FrameRate;
-  countdownSeconds: CountdownSeconds;
-  onionOpacity: number;
-  onionFrameCount: OnionFrameCount;
-  autoPreviewFrames: number;
-  autoPreviewLoops: AutoPreviewLoops;
   width: number;
   height: number;
   frameCount: number;
-  gridEnabled: boolean;
-  cameraFacing: "environment" | "user";
-  cameraDeviceId: string | null;
   orientation: FilmOrientation;
 }
 
@@ -72,33 +74,33 @@ export interface SessionEvent {
   acknowledgedAt?: number;
 }
 
+interface ArchivedProjectSettings {
+  name: string;
+  fps: FrameRate;
+  width: number;
+  height: number;
+  orientation?: FilmOrientation;
+  countdownSeconds?: CountdownSeconds;
+  onionOpacity?: number;
+  onionFrameCount?: OnionFrameCount;
+  autoPreviewFrames?: number;
+  autoPreviewLoops?: AutoPreviewLoops;
+  gridEnabled?: boolean;
+  cameraFacing?: "environment" | "user";
+  cameraDeviceId?: string | null;
+}
+
 export interface StomoManifestV1 {
   format: "stomo-project";
   version: 1;
-  project: Omit<
-    ProjectRecord,
-    | "id"
-    | "createdAt"
-    | "updatedAt"
-    | "frameCount"
-    | "orientation"
-    | "cameraDeviceId"
-    | "onionFrameCount"
-  > & {
-    orientation?: FilmOrientation;
-    cameraDeviceId?: string | null;
-    onionFrameCount?: OnionFrameCount;
-  };
+  project: ArchivedProjectSettings;
   frames: Array<{ file: string; position: number }>;
 }
 
 export interface StomoManifestV2 {
   format: "stomo-project";
   version: 2;
-  project: Omit<
-    ProjectRecord,
-    "id" | "createdAt" | "updatedAt" | "frameCount" | "onionFrameCount"
-  > & { onionFrameCount?: OnionFrameCount };
+  project: ArchivedProjectSettings;
   frames: Array<{
     imageFile: string;
     thumbnailFile: string;

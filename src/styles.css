@@ -200,11 +200,11 @@ svg {
   padding: 0 clamp(20px, 4vw, 54px) 48px;
 }
 .home-intro {
-  max-width: 790px;
-  margin: clamp(48px, 8vh, 88px) 0 38px;
+  max-width: none;
+  margin: clamp(26px, 4.5vh, 48px) 0 26px;
 }
 .eyebrow {
-  margin: 0 0 13px;
+  margin: 0 0 8px;
   color: #6d5f20;
   font-size: 0.83rem;
   font-weight: 700;
@@ -213,14 +213,15 @@ svg {
 }
 .home-intro h1 {
   margin: 0;
-  font-size: clamp(2.5rem, 6vw, 5.4rem);
-  line-height: 0.96;
-  letter-spacing: -0.065em;
+  font-size: clamp(2rem, 4.4vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.055em;
+  white-space: nowrap;
 }
 .home-intro > p:last-child {
-  margin: 20px 0 0;
+  margin: 10px 0 0;
   color: #56595a;
-  font-size: clamp(1rem, 2vw, 1.2rem);
+  font-size: clamp(0.92rem, 1.5vw, 1.08rem);
 }
 .project-grid {
   display: grid;
@@ -759,18 +760,18 @@ svg {
     max(10px, env(safe-area-inset-left));
   background: var(--ink);
 }
-.studio-header > div {
+.studio-header__title {
   display: grid;
   gap: 1px;
   min-width: 0;
 }
-.studio-header strong {
+.studio-header__title strong {
   overflow: hidden;
   font-size: 1rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.studio-header span {
+.studio-header__title span {
   color: #bfc1c2;
   font-size: 0.7rem;
 }
@@ -787,13 +788,16 @@ svg {
   font-size: 0.86rem;
   font-weight: 700;
 }
-.studio-session-layer {
-  position: fixed;
-  z-index: 70;
-  top: 7px;
-  right: 160px;
+.studio-header__actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.studio-session-layer .session-state {
+.studio-header__actions .session-actions {
+  gap: 8px;
+}
+.studio-header__actions .session-state {
   width: 48px;
   height: 48px;
   min-height: 48px;
@@ -804,17 +808,17 @@ svg {
   color: #fff;
   font-size: 0;
 }
-.studio-session-layer .session-state span {
+.studio-header__actions .session-state span {
   position: absolute;
   top: -5px;
   right: -5px;
   font-size: 0.7rem;
   color: var(--ink);
 }
-.studio-session-layer .compact-action {
+.studio-header__actions .compact-action {
   display: none;
 }
-.studio-session-layer .compact-action--fullscreen {
+.studio-header__actions .compact-action--fullscreen {
   width: 48px;
   height: 48px;
   min-height: 48px;
@@ -827,7 +831,7 @@ svg {
   font-size: 0;
   line-height: 0;
 }
-.studio-session-layer .compact-action--fullscreen span {
+.studio-header__actions .compact-action--fullscreen span {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -836,7 +840,7 @@ svg {
   clip-path: inset(50%);
   white-space: nowrap;
 }
-.studio-session-layer .compact-action--fullscreen svg {
+.studio-header__actions .compact-action--fullscreen svg {
   width: 24px;
   height: 24px;
   display: block;
@@ -936,7 +940,6 @@ svg {
 .camera-grid {
   position: absolute;
   z-index: 5;
-  inset: 0;
   pointer-events: none;
 }
 .camera-grid i {
@@ -1438,22 +1441,26 @@ svg {
 }
 
 .settings-accordions {
-  align-content: start;
+  display: block;
+  padding: 16px;
+}
+.settings-accordion + .settings-accordion {
+  margin-top: 12px;
 }
 .settings-accordion {
   overflow: hidden;
   border: 2px solid var(--ink);
-  border-radius: 16px;
-  background: #fff;
+  border-radius: 14px;
+  background: #f8fafb;
 }
 .settings-accordion__heading {
   width: 100%;
-  min-height: 68px;
+  min-height: 72px;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 28px;
+  grid-template-columns: 38px minmax(0, 1fr) 24px;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 12px;
+  padding: 11px 16px;
   border: 0;
   background: #fff;
   color: var(--ink);
@@ -1463,8 +1470,8 @@ svg {
   background: #fff3b8;
 }
 .settings-accordion__heading > svg {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
 }
 .settings-accordion__heading > svg:last-child {
   width: 24px;
@@ -1472,22 +1479,37 @@ svg {
 }
 .settings-accordion__heading span {
   display: grid;
-  gap: 2px;
+  gap: 3px;
+}
+.settings-accordion__heading strong {
+  font-size: 0.92rem;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
 }
 .settings-accordion__heading small {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.66rem;
+  line-height: 1.25;
 }
 .settings-accordion__panel {
-  padding: 14px;
+  padding: 4px 16px 10px;
   border-top: 2px solid var(--ink);
+  background: #f8fafb;
 }
 .settings-list > label,
 .settings-list > .settings-row {
-  grid-template-columns: 1fr minmax(150px, 230px);
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.9fr) minmax(240px, 1.1fr);
   align-items: center;
-  padding-bottom: 16px;
+  gap: 18px;
+  margin: 0;
+  padding: 10px 0;
   border-bottom: 1px solid #c9c5bb;
+}
+.settings-list > label:last-child,
+.settings-list > .settings-row:last-child {
+  border-bottom: 0;
 }
 .settings-list > label > span,
 .settings-list > .settings-row > span {
@@ -1499,8 +1521,12 @@ svg {
 .settings-list > label svg,
 .settings-list > .settings-row svg {
   grid-row: 1 / 3;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
+}
+.settings-list strong {
+  font-size: 0.8rem;
+  line-height: 1.15;
 }
 .title-editor {
   display: grid;
@@ -1517,8 +1543,14 @@ svg {
 }
 .settings-list small {
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.64rem;
+  line-height: 1.3;
   font-weight: 500;
+}
+.dialog__content.settings-accordions .settings-list select,
+.dialog__content.settings-accordions .settings-list input:not([type="range"]) {
+  min-height: 50px;
+  font-size: 0.78rem;
 }
 .settings-list input[type="range"] {
   width: 100%;
@@ -1531,6 +1563,7 @@ svg {
   border-radius: 13px;
   background: var(--cyan);
   color: var(--ink);
+  font-size: 0.78rem;
   font-weight: 700;
 }
 .settings-toggle {
@@ -1540,6 +1573,7 @@ svg {
   border-radius: 999px;
   background: #e0e0dc;
   color: var(--ink);
+  font-size: 0.78rem;
   font-weight: 700;
 }
 .settings-toggle[aria-pressed="true"] {
@@ -1717,9 +1751,6 @@ svg {
     justify-content: center;
     padding: 6px;
   }
-  .studio-session-layer {
-    right: 148px;
-  }
 }
 
 @media (max-width: 620px) {
@@ -1752,6 +1783,13 @@ svg {
   }
   .project-grid {
     grid-template-columns: 1fr;
+  }
+  .home-intro {
+    margin: 28px 0 24px;
+  }
+  .home-intro h1 {
+    font-size: clamp(2.15rem, 11vw, 3.2rem);
+    white-space: normal;
   }
   .exit-alert {
     top: 72px;
@@ -1793,6 +1831,74 @@ svg {
   .settings-list > label > span,
   .settings-list > .settings-row > span {
     grid-template-columns: 28px 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .studio-header {
+    gap: 6px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+  .studio-header__actions,
+  .studio-header__actions .session-actions {
+    gap: 4px;
+  }
+  .header-action {
+    width: 48px;
+    min-width: 48px;
+    padding: 0;
+    justify-content: center;
+  }
+  .header-action span {
+    display: none;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 760px) {
+  .home-intro {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: baseline;
+    column-gap: 16px;
+    row-gap: 5px;
+    margin: 18px 0;
+  }
+  .home-intro .eyebrow {
+    grid-row: 1;
+    grid-column: 1;
+    margin: 0;
+  }
+  .home-intro h1 {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    font-size: clamp(1.75rem, 5vw, 2.5rem);
+    white-space: nowrap;
+  }
+  .home-intro > p:last-child {
+    grid-row: 1;
+    grid-column: 2;
+    margin: 0;
+    font-size: 0.82rem;
+  }
+  .new-project-card,
+  .project-card {
+    min-height: 210px;
+  }
+  .new-project-card {
+    padding: 20px;
+  }
+  .camera-bubble {
+    width: 62px;
+    height: 62px;
+  }
+  .new-project-card strong {
+    font-size: 1.2rem;
+  }
+  .project-card__body {
+    min-height: 74px;
+    padding-top: 11px;
+    padding-bottom: 11px;
   }
 }
 
@@ -1845,15 +1951,12 @@ svg {
   .header-action {
     min-height: 44px;
   }
-  .studio-session-layer {
-    top: 4px;
-  }
-  .studio-session-layer .session-state {
+  .studio-header__actions .session-state {
     width: 44px;
     height: 44px;
     min-height: 44px;
   }
-  .studio-session-layer .compact-action--fullscreen {
+  .studio-header__actions .compact-action--fullscreen {
     width: 44px;
     height: 44px;
     min-height: 44px;

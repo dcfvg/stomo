@@ -11,17 +11,9 @@ const project: ProjectRecord = {
   createdAt: new Date("2026-08-28T08:00:00Z").getTime(),
   updatedAt: new Date("2026-08-29T08:32:00Z").getTime(),
   fps: 8,
-  countdownSeconds: 2,
-  onionOpacity: 0.4,
-  onionFrameCount: 2,
-  autoPreviewFrames: 6,
-  autoPreviewLoops: 2,
   width: 1920,
   height: 1080,
   frameCount: 0,
-  gridEnabled: false,
-  cameraFacing: "environment",
-  cameraDeviceId: null,
   orientation: "landscape",
 };
 

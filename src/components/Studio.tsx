@@ -29,7 +29,14 @@ import {
   RiStopFill,
   RiTimerLine,
 } from "@remixicon/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   exportPhotosZip,
   exportProject,
@@ -46,8 +53,8 @@ import { renderTitleCard } from "../media/titleCard";
 import { useStomoStore } from "../state/useStomoStore";
 import { FRAME_WARNING, MAX_FRAMES } from "../config";
 import { getFrameImage } from "../storage/database";
+import { fitMediaRect, type MediaRect } from "../lib/mediaRect";
 import type {
-  AutoPreviewLoops,
   CountdownSeconds,
   ExportProgress,
   FilmOrientation,
@@ -104,7 +111,7 @@ function cameraLabel(device: MediaDeviceInfo, index: number) {
   return device.label || `Caméra ${index + 1}`;
 }
 
-export function Studio() {
+export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
   const {
     project,
     frames,
@@ -115,8 +122,11 @@ export function Studio() {
     duplicateSelectedFrame,
     moveSelectedFrame,
     updateProject,
+    shootingPreferences,
+    updateShootingPreferences,
     chooseFrame,
   } = useStomoStore();
+  const stageRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const playbackSurfaceRef = useRef<SmoothPlaybackHandle>(null);
@@ -130,6 +140,9 @@ export function Studio() {
   const [cameraError, setCameraError] = useState("");
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
+  const [cameraContentRect, setCameraContentRect] = useState<MediaRect | null>(
+    null,
+  );
   const [activity, setActivity] = useState<StudioActivity>("idle");
   const [playbackKind, setPlaybackKind] = useState<PlaybackKind>(null);
   const [previewFrameIndex, setPreviewFrameIndex] = useState(0);
@@ -160,11 +173,30 @@ export function Studio() {
     [frames, selectedFrameId],
   );
   const onionLayers = project
-    ? buildOnionLayers(frames, project.onionFrameCount, project.onionOpacity)
+    ? buildOnionLayers(
+        frames,
+        shootingPreferences.onionFrameCount,
+        shootingPreferences.onionOpacity,
+      )
     : [];
   const projectId = project?.id;
-  const cameraFacing = project?.cameraFacing;
-  const cameraDeviceId = project?.cameraDeviceId;
+  const cameraFacing = shootingPreferences.cameraFacing;
+  const cameraDeviceId = shootingPreferences.cameraDeviceId;
+  const mediaWidth = project?.width ?? 0;
+  const mediaHeight = project?.height ?? 0;
+
+  const updateCameraContentRect = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage || !mediaWidth || !mediaHeight) return;
+    setCameraContentRect(
+      fitMediaRect(
+        stage.clientWidth,
+        stage.clientHeight,
+        mediaWidth,
+        mediaHeight,
+      ),
+    );
+  }, [mediaHeight, mediaWidth]);
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -212,7 +244,22 @@ export function Studio() {
   }, []);
 
   useEffect(() => {
-    if (!projectId || !cameraFacing) return;
+    updateCameraContentRect();
+    const stage = stageRef.current;
+    const observer =
+      stage && typeof ResizeObserver === "function"
+        ? new ResizeObserver(updateCameraContentRect)
+        : null;
+    if (stage) observer?.observe(stage);
+    window.addEventListener("resize", updateCameraContentRect);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateCameraContentRect);
+    };
+  }, [updateCameraContentRect]);
+
+  useEffect(() => {
+    if (!projectId) return;
     let disposed = false;
     const startCamera = async () => {
       stopCamera();
@@ -239,7 +286,7 @@ export function Studio() {
           setMessage(
             "Cette caméra n’est plus disponible. Stomo en choisit une autre.",
           );
-          void updateProject({ cameraDeviceId: null }, false);
+          void updateShootingPreferences({ cameraDeviceId: null });
         }
         if (disposed) {
           stream.getTracks().forEach((track) => track.stop());
@@ -259,8 +306,9 @@ export function Studio() {
           .getVideoTracks()[0]
           ?.getSettings().deviceId;
         if (activeDeviceId && !cameraDeviceId)
-          void updateProject({ cameraDeviceId: activeDeviceId }, false);
+          void updateShootingPreferences({ cameraDeviceId: activeDeviceId });
         setCameraReady(true);
+        updateCameraContentRect();
       } catch {
         setCameraError(
           "La caméra est bloquée. Autorise-la dans Chrome, puis réessaie.",
@@ -278,7 +326,8 @@ export function Studio() {
     cameraRestart,
     projectId,
     stopCamera,
-    updateProject,
+    updateCameraContentRect,
+    updateShootingPreferences,
   ]);
 
   useEffect(() => {
@@ -352,12 +401,8 @@ export function Studio() {
   );
 
   const playMotionAid = useCallback(
-    async (
-      sequence: FrameSummary[],
-      enabled: AutoPreviewLoops,
-      token: number,
-    ) => {
-      if (!sequence.length || enabled === 0) {
+    async (sequence: FrameSummary[], enabled: boolean, token: number) => {
+      if (!sequence.length || !enabled) {
         if (operationToken.current === token) setActivity("idle");
         return;
       }
@@ -447,7 +492,11 @@ export function Studio() {
       setInspectionFrame(null);
       setMessage("");
       setActivity("countdown");
-      for (let number = project.countdownSeconds; number > 0; number -= 1) {
+      for (
+        let number = shootingPreferences.countdownSeconds;
+        number > 0;
+        number -= 1
+      ) {
         if (operationToken.current !== token) return;
         setCountdown(number);
         beep();
@@ -478,7 +527,7 @@ export function Studio() {
       const updatedFrames = useStomoStore.getState().frames;
       await playMotionAid(
         updatedFrames.slice(-4),
-        project.autoPreviewLoops,
+        shootingPreferences.autoPreviewEnabled,
         token,
       );
       if (updatedFrames.length === FRAME_WARNING)
@@ -509,6 +558,8 @@ export function Studio() {
     frames.length,
     playMotionAid,
     project,
+    shootingPreferences.autoPreviewEnabled,
+    shootingPreferences.countdownSeconds,
     showCaptureFeedback,
   ]);
   takePhotoRef.current = () => void takePhoto();
@@ -603,23 +654,28 @@ export function Studio() {
         >
           <RiArrowLeftLine aria-hidden="true" />
         </button>
-        <div>
+        <div className="studio-header__title">
           <strong>{project.name}</strong>
           <span>
             {frames.length} photo{frames.length > 1 ? "s" : ""} ·{" "}
             {Math.round(frames.length / project.fps)} s
           </span>
         </div>
-        <button
-          className="header-action"
-          type="button"
-          onClick={() => setShowExports(true)}
-        >
-          <RiDownload2Line aria-hidden="true" /> Enregistrer
-        </button>
+        <div className="studio-header__actions">
+          {sessionUi}
+          <button
+            className="header-action"
+            type="button"
+            onClick={() => setShowExports(true)}
+            aria-label="Enregistrer mon travail"
+          >
+            <RiDownload2Line aria-hidden="true" /> <span>Enregistrer</span>
+          </button>
+        </div>
       </header>
 
       <section
+        ref={stageRef}
         className={`camera-stage camera-stage--${project.orientation}`}
         aria-label="Caméra et montage"
       >
@@ -630,6 +686,7 @@ export function Studio() {
           muted
           playsInline
           aria-label="Image de la caméra"
+          onLoadedMetadata={updateCameraContentRect}
         />
         {cameraError && (
           <div className="camera-message">
@@ -647,7 +704,7 @@ export function Studio() {
         {!cameraReady && !cameraError && (
           <div className="camera-loading">J’allume la caméra…</div>
         )}
-        {project.onionOpacity > 0 &&
+        {shootingPreferences.onionOpacity > 0 &&
           !playbackVisible &&
           onionLayers.map(({ frame, opacity }) => {
             return (
@@ -661,14 +718,21 @@ export function Studio() {
               />
             );
           })}
-        {project.gridEnabled && (
-          <div className="camera-grid" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-            <i />
-          </div>
-        )}
+        {shootingPreferences.gridEnabled &&
+          cameraContentRect &&
+          !playbackVisible &&
+          !inspectionFrame && (
+            <div
+              className="camera-grid"
+              aria-hidden="true"
+              style={cameraContentRect}
+            >
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
+          )}
         <SmoothPlayback ref={playbackSurfaceRef} loadImage={getFrameImage} />
         {inspectionFrame && !playbackVisible && (
           <button
@@ -710,14 +774,14 @@ export function Studio() {
           <button
             aria-label="Image fantôme"
             className={
-              project.onionOpacity > 0
+              shootingPreferences.onionOpacity > 0
                 ? "tool-button tool-button--active"
                 : "tool-button"
             }
             type="button"
             onClick={() =>
-              void updateProject({
-                onionOpacity: project.onionOpacity > 0 ? 0 : 0.4,
+              void updateShootingPreferences({
+                onionOpacity: shootingPreferences.onionOpacity > 0 ? 0 : 0.4,
               })
             }
           >
@@ -931,11 +995,12 @@ export function Studio() {
 
       {showSettings && (
         <Dialog
-          title="Réglages du film"
+          title="Réglages"
           onClose={() => {
             setShowSettings(false);
             setSettingsSection(null);
           }}
+          wide
         >
           <div className="dialog__content settings-accordions">
             <section className="settings-accordion" id="settings-capture">
@@ -948,7 +1013,7 @@ export function Studio() {
                 <RiCameraFill aria-hidden="true" />
                 <span>
                   <strong>Prendre les photos</strong>
-                  <small>Caméra, retardateur et grille</small>
+                  <small>Pour tous les films · caméra et repères</small>
                 </span>
                 {settingsSection === "capture" ? (
                   <RiArrowUpSLine aria-hidden="true" />
@@ -962,10 +1027,10 @@ export function Studio() {
                     <span>
                       <RiCameraSwitchLine aria-hidden="true" />
                       <strong>Caméra</strong>
-                      <small>La caméra arrière est choisie au début.</small>
+                      <small>La même caméra est gardée pour tes films.</small>
                     </span>
                     <select
-                      value={project.cameraDeviceId ?? ""}
+                      value={shootingPreferences.cameraDeviceId ?? ""}
                       onChange={(event) => {
                         const device = cameraDevices.find(
                           (candidate) =>
@@ -973,7 +1038,7 @@ export function Studio() {
                         );
                         const label =
                           device?.label.toLocaleLowerCase("fr") ?? "";
-                        void updateProject({
+                        void updateShootingPreferences({
                           cameraDeviceId: event.target.value || null,
                           cameraFacing:
                             /back|rear|environment|arrière|dos/.test(label)
@@ -992,44 +1057,14 @@ export function Studio() {
                   </label>
                   <label>
                     <span>
-                      {project.orientation === "portrait" ? (
-                        <RiSmartphoneLine aria-hidden="true" />
-                      ) : (
-                        <RiLandscapeLine aria-hidden="true" />
-                      )}
-                      <strong>Sens du film</strong>
-                      <small>
-                        {frames.length
-                          ? "Fixé après la première photo."
-                          : "Choisis avant la première photo."}
-                      </small>
-                    </span>
-                    <select
-                      value={project.orientation}
-                      disabled={frames.length > 0}
-                      onChange={(event) => {
-                        const orientation = event.target
-                          .value as FilmOrientation;
-                        void updateProject({
-                          orientation,
-                          ...FULL_HD[orientation],
-                        });
-                      }}
-                    >
-                      <option value="landscape">Paysage</option>
-                      <option value="portrait">Vertical</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>
                       <RiTimerLine aria-hidden="true" />
                       <strong>Retardateur</strong>
                       <small>Le temps pour retirer ta main.</small>
                     </span>
                     <select
-                      value={project.countdownSeconds}
+                      value={shootingPreferences.countdownSeconds}
                       onChange={(event) =>
-                        void updateProject({
+                        void updateShootingPreferences({
                           countdownSeconds: Number(
                             event.target.value,
                           ) as CountdownSeconds,
@@ -1052,14 +1087,14 @@ export function Studio() {
                     <button
                       className="settings-toggle"
                       type="button"
-                      aria-pressed={project.gridEnabled}
+                      aria-pressed={shootingPreferences.gridEnabled}
                       onClick={() =>
-                        void updateProject({
-                          gridEnabled: !project.gridEnabled,
+                        void updateShootingPreferences({
+                          gridEnabled: !shootingPreferences.gridEnabled,
                         })
                       }
                     >
-                      {project.gridEnabled ? "Oui" : "Non"}
+                      {shootingPreferences.gridEnabled ? "Oui" : "Non"}
                     </button>
                   </div>
                   <div className="settings-row">
@@ -1097,7 +1132,7 @@ export function Studio() {
                 <RiGhostLine aria-hidden="true" />
                 <span>
                   <strong>Voir le mouvement</strong>
-                  <small>Aperçu, comparaison et images fantômes</small>
+                  <small>Pour tous les films · aperçu et fantômes</small>
                 </span>
                 {settingsSection === "motion" ? (
                   <RiArrowUpSLine aria-hidden="true" />
@@ -1118,15 +1153,15 @@ export function Studio() {
                     <button
                       className="settings-toggle"
                       type="button"
-                      aria-pressed={project.autoPreviewLoops > 0}
+                      aria-pressed={shootingPreferences.autoPreviewEnabled}
                       onClick={() =>
-                        void updateProject({
-                          autoPreviewFrames: 4,
-                          autoPreviewLoops: project.autoPreviewLoops ? 0 : 1,
+                        void updateShootingPreferences({
+                          autoPreviewEnabled:
+                            !shootingPreferences.autoPreviewEnabled,
                         })
                       }
                     >
-                      {project.autoPreviewLoops ? "Oui" : "Non"}
+                      {shootingPreferences.autoPreviewEnabled ? "Oui" : "Non"}
                     </button>
                   </div>
                   <div className="settings-row">
@@ -1159,9 +1194,9 @@ export function Studio() {
                       min="0"
                       max="0.7"
                       step="0.1"
-                      value={project.onionOpacity}
+                      value={shootingPreferences.onionOpacity}
                       onChange={(event) =>
-                        void updateProject({
+                        void updateShootingPreferences({
                           onionOpacity: Number(event.target.value),
                         })
                       }
@@ -1174,9 +1209,9 @@ export function Studio() {
                       <small>Les plus anciennes sont plus légères.</small>
                     </span>
                     <select
-                      value={project.onionFrameCount}
+                      value={shootingPreferences.onionFrameCount}
                       onChange={(event) =>
-                        void updateProject({
+                        void updateShootingPreferences({
                           onionFrameCount: Number(
                             event.target.value,
                           ) as OnionFrameCount,
@@ -1203,8 +1238,8 @@ export function Studio() {
               >
                 <RiFilmLine aria-hidden="true" />
                 <span>
-                  <strong>Mon film</strong>
-                  <small>Titre et vitesse</small>
+                  <strong>Ce film</strong>
+                  <small>Titre, sens et vitesse</small>
                 </span>
                 {settingsSection === "film" ? (
                   <RiArrowUpSLine aria-hidden="true" />
@@ -1240,6 +1275,36 @@ export function Studio() {
                       </button>
                     </div>
                   </div>
+                  <label>
+                    <span>
+                      {project.orientation === "portrait" ? (
+                        <RiSmartphoneLine aria-hidden="true" />
+                      ) : (
+                        <RiLandscapeLine aria-hidden="true" />
+                      )}
+                      <strong>Sens du film</strong>
+                      <small>
+                        {frames.length
+                          ? "Fixé après la première photo."
+                          : "Choisis avant la première photo."}
+                      </small>
+                    </span>
+                    <select
+                      value={project.orientation}
+                      disabled={frames.length > 0}
+                      onChange={(event) => {
+                        const orientation = event.target
+                          .value as FilmOrientation;
+                        void updateProject({
+                          orientation,
+                          ...FULL_HD[orientation],
+                        });
+                      }}
+                    >
+                      <option value="landscape">Paysage</option>
+                      <option value="portrait">Vertical</option>
+                    </select>
+                  </label>
                   <label>
                     <span>
                       <RiSpeedLine aria-hidden="true" />

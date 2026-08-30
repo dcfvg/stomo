@@ -8,19 +8,19 @@ interface DialogProps {
   wide?: boolean;
 }
 
+function shouldCompactForKeyboard(target: Element | null) {
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+  const editing =
+    target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+  return editing || viewportHeight < window.innerHeight * 0.72;
+}
+
 export function Dialog({ title, children, onClose, wide }: DialogProps) {
   const [keyboardCompact, setKeyboardCompact] = useState(false);
 
   useEffect(() => {
-    const update = () => {
-      const viewportHeight =
-        window.visualViewport?.height ?? window.innerHeight;
-      const active = document.activeElement;
-      const editing =
-        active instanceof HTMLInputElement ||
-        active instanceof HTMLTextAreaElement;
-      setKeyboardCompact(editing || viewportHeight < window.innerHeight * 0.72);
-    };
+    const update = () =>
+      setKeyboardCompact(shouldCompactForKeyboard(document.activeElement));
     window.visualViewport?.addEventListener("resize", update);
     return () => window.visualViewport?.removeEventListener("resize", update);
   }, []);
@@ -38,7 +38,9 @@ export function Dialog({ title, children, onClose, wide }: DialogProps) {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        onFocusCapture={() => setKeyboardCompact(true)}
+        onFocusCapture={(event) =>
+          setKeyboardCompact(shouldCompactForKeyboard(event.target))
+        }
       >
         <header className="dialog__header">
           <h2>{title}</h2>

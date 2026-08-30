@@ -256,16 +256,8 @@ export async function buildProjectArchive(
     project: {
       name: project.name,
       fps: project.fps,
-      countdownSeconds: project.countdownSeconds,
-      onionOpacity: project.onionOpacity,
-      onionFrameCount: project.onionFrameCount,
-      autoPreviewFrames: project.autoPreviewFrames,
-      autoPreviewLoops: project.autoPreviewLoops,
       width: project.width,
       height: project.height,
-      gridEnabled: project.gridEnabled,
-      cameraFacing: project.cameraFacing,
-      cameraDeviceId: project.cameraDeviceId,
       orientation: project.orientation,
     },
     frames: imageFiles.map((imageFile, position) => ({
@@ -345,16 +337,8 @@ export async function exportProject(
     project: {
       name: project.name,
       fps: project.fps,
-      countdownSeconds: project.countdownSeconds,
-      onionOpacity: project.onionOpacity,
-      onionFrameCount: project.onionFrameCount,
-      autoPreviewFrames: project.autoPreviewFrames,
-      autoPreviewLoops: project.autoPreviewLoops,
       width: project.width,
       height: project.height,
-      gridEnabled: project.gridEnabled,
-      cameraFacing: project.cameraFacing,
-      cameraDeviceId: project.cameraDeviceId,
       orientation: project.orientation,
     },
     frames: imageFiles.map((imageFile, position) => ({
@@ -438,14 +422,15 @@ export async function importProject(
     createdId = created.id;
     await saveProject({
       ...created,
-      ...manifest.project,
       id: created.id,
       name: importedName,
       createdAt: created.createdAt,
       updatedAt: Date.now(),
+      fps: manifest.project.fps,
+      width: orientation === "portrait" ? 1080 : 1920,
+      height: orientation === "portrait" ? 1920 : 1080,
       frameCount: 0,
       orientation,
-      cameraDeviceId: manifest.project.cameraDeviceId ?? null,
     });
     const frameOrder = manifest.frames
       .map((descriptor, index) => ({ index, position: descriptor.position }))

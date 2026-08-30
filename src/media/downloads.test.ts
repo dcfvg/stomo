@@ -44,17 +44,9 @@ const project: ProjectRecord = {
   createdAt: 1,
   updatedAt: 1,
   fps: 8,
-  countdownSeconds: 3,
-  onionOpacity: 0.4,
-  onionFrameCount: 2,
-  autoPreviewFrames: 4,
-  autoPreviewLoops: 1,
   width: 1920,
   height: 1080,
   frameCount: 0,
-  gridEnabled: false,
-  cameraFacing: "environment",
-  cameraDeviceId: null,
   orientation: "landscape",
 };
 
@@ -124,9 +116,15 @@ describe("téléchargements", () => {
       throw new Error("Manifest absent");
     const manifest = JSON.parse(
       await manifestEntry.getData(new TextWriter()),
-    ) as { version: number; project: { onionFrameCount?: number } };
+    ) as { version: number; project: Record<string, unknown> };
     expect(manifest.version).toBe(2);
-    expect(manifest.project.onionFrameCount).toBe(2);
+    expect(manifest.project).toEqual({
+      name: project.name,
+      fps: project.fps,
+      width: project.width,
+      height: project.height,
+      orientation: project.orientation,
+    });
     expect(
       archiveEntries.filter((entry) => entry.filename.startsWith("images/")),
     ).toHaveLength(3);
@@ -197,7 +195,6 @@ describe("téléchargements", () => {
       orientation: "landscape",
       width: 1920,
       height: 1080,
-      onionFrameCount: 2,
     });
     expect(imported.frames).toHaveLength(1);
     expect(createThumbnail).toHaveBeenCalled();

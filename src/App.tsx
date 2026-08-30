@@ -89,7 +89,7 @@ export default function App() {
         </header>
       )}
       {project ? (
-        <Studio />
+        <Studio sessionUi={sessionUi} />
       ) : (
         <>
           <InstallPrompt />
@@ -100,7 +100,6 @@ export default function App() {
           />
         </>
       )}
-      {project && <div className="studio-session-layer">{sessionUi}</div>}
     </>
   );
 }

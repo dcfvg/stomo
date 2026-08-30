@@ -8,12 +8,15 @@ import {
   getFrameImage,
   getProjectPreviewFrame,
   getProject,
+  getShootingPreferences,
   listFrames,
   moveFrame,
   normalizeFrameRecord,
   normalizeProjectRecord,
+  normalizeShootingPreferences,
   renameProject,
   saveProject,
+  saveShootingPreferences,
 } from "./database";
 
 const image = () => new Blob(["image"], { type: "image/webp" });
@@ -52,7 +55,7 @@ describe("montage stocké dans le navigateur", () => {
     expect(await listFrames(project.id)).toHaveLength(480);
   });
 
-  it("crée les nouveaux films en Full HD, caméra arrière et retardateur 2 s", async () => {
+  it("crée les nouveaux films en Full HD", async () => {
     const landscape = await createProject(`Paysage ${crypto.randomUUID()}`);
     const portrait = await createProject(
       `Vertical ${crypto.randomUUID()}`,
@@ -62,11 +65,6 @@ describe("montage stocké dans le navigateur", () => {
       orientation: "landscape",
       width: 1920,
       height: 1080,
-      countdownSeconds: 2,
-      cameraFacing: "environment",
-      autoPreviewFrames: 4,
-      autoPreviewLoops: 1,
-      onionFrameCount: 2,
     });
     expect(await getProject(portrait.id)).toMatchObject({
       orientation: "portrait",
@@ -93,27 +91,28 @@ describe("montage stocké dans le navigateur", () => {
     expect((await getProject(project.id))?.name).toHaveLength(60);
   });
 
-  it("donne deux images fantômes aux anciens projets", () => {
-    expect(
-      normalizeProjectRecord({
-        id: "ancien",
-        name: "Ancien",
-        createdAt: 1,
-        updatedAt: 1,
-        fps: 8,
-        countdownSeconds: 3,
-        onionOpacity: 0.4,
-        autoPreviewFrames: 8,
-        autoPreviewLoops: 2,
-        width: 1280,
-        height: 720,
-        frameCount: 0,
-        gridEnabled: false,
-        cameraFacing: "environment",
-        cameraDeviceId: null,
-        orientation: "landscape",
-      } as unknown as ProjectRecord),
-    ).toMatchObject({ onionFrameCount: 2, width: 1920, height: 1080 });
+  it("retire les anciennes habitudes du projet normalisé", () => {
+    const project = normalizeProjectRecord({
+      id: "ancien",
+      name: "Ancien",
+      createdAt: 1,
+      updatedAt: 1,
+      fps: 8,
+      countdownSeconds: 3,
+      onionOpacity: 0.4,
+      autoPreviewFrames: 8,
+      autoPreviewLoops: 2,
+      width: 1280,
+      height: 720,
+      frameCount: 0,
+      gridEnabled: false,
+      cameraFacing: "environment",
+      cameraDeviceId: null,
+      orientation: "landscape",
+    } as unknown as ProjectRecord);
+    expect(project).toMatchObject({ width: 1920, height: 1080 });
+    expect(project).not.toHaveProperty("onionFrameCount");
+    expect(project).not.toHaveProperty("countdownSeconds");
   });
 
   it.each([
@@ -123,28 +122,44 @@ describe("montage stocké dans le navigateur", () => {
     [3, 1],
     [4, 1],
   ])("migre %i passage(s) vers l’aperçu activé ou coupé", (loops, expected) => {
-    const project = normalizeProjectRecord({
-      id: `ancien-${loops}`,
-      name: "Ancien",
-      createdAt: 1,
-      updatedAt: 1,
-      fps: 8,
+    const preferences = normalizeShootingPreferences({
       countdownSeconds: 2,
       onionOpacity: 0.4,
       onionFrameCount: 2,
-      autoPreviewFrames: 8,
       autoPreviewLoops: loops,
-      width: 1280,
-      height: 720,
-      frameCount: 0,
       gridEnabled: false,
       cameraFacing: "environment",
       cameraDeviceId: null,
-      orientation: "landscape",
-    } as ProjectRecord);
+    });
 
-    expect(project.autoPreviewFrames).toBe(4);
-    expect(project.autoPreviewLoops).toBe(expected);
+    expect(preferences.autoPreviewEnabled).toBe(Boolean(expected));
+  });
+
+  it("partage et conserve les habitudes de prise de vue", async () => {
+    const firstProject = await createProject(
+      `Habitudes ${crypto.randomUUID()}`,
+    );
+    await saveProject({ ...firstProject, updatedAt: 321 });
+    await saveShootingPreferences({
+      countdownSeconds: 5,
+      onionOpacity: 0.6,
+      onionFrameCount: 3,
+      autoPreviewEnabled: false,
+      gridEnabled: true,
+      cameraFacing: "user",
+      cameraDeviceId: "camera-enfant",
+    });
+    await createProject(`Autre film ${crypto.randomUUID()}`);
+    expect(await getShootingPreferences()).toEqual({
+      countdownSeconds: 5,
+      onionOpacity: 0.6,
+      onionFrameCount: 3,
+      autoPreviewEnabled: false,
+      gridEnabled: true,
+      cameraFacing: "user",
+      cameraDeviceId: "camera-enfant",
+    });
+    expect((await getProject(firstProject.id))?.updatedAt).toBe(321);
   });
 
   it("utilise l’original immédiatement quand une vignette manque", async () => {

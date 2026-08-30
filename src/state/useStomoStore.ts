@@ -6,14 +6,22 @@ import {
   duplicateFrame,
   getFrameImage,
   getProject,
+  getShootingPreferences,
   listFrames,
   listProjects,
   moveFrame,
   saveProject,
+  saveShootingPreferences,
   updateFrameThumbnail,
+  DEFAULT_SHOOTING_PREFERENCES,
 } from "../storage/database";
 import { createThumbnail, loadBlobImage } from "../media/images";
-import type { FilmOrientation, FrameSummary, ProjectRecord } from "../types";
+import type {
+  FilmOrientation,
+  FrameSummary,
+  ProjectRecord,
+  ShootingPreferences,
+} from "../types";
 
 interface CapturedFrame {
   image: Blob;
@@ -25,6 +33,7 @@ interface CapturedFrame {
 interface StomoState {
   projects: ProjectRecord[];
   project: ProjectRecord | null;
+  shootingPreferences: ShootingPreferences;
   frames: FrameSummary[];
   selectedFrameId: string | null;
   loading: boolean;
@@ -40,6 +49,9 @@ interface StomoState {
   updateProject: (
     patch: Partial<ProjectRecord>,
     markModified?: boolean,
+  ) => Promise<void>;
+  updateShootingPreferences: (
+    patch: Partial<ShootingPreferences>,
   ) => Promise<void>;
   chooseFrame: (id: string) => void;
   setNotice: (notice: string | null) => void;
@@ -96,14 +108,18 @@ async function repairThumbnails(
 export const useStomoStore = create<StomoState>((set, get) => ({
   projects: [],
   project: null,
+  shootingPreferences: DEFAULT_SHOOTING_PREFERENCES,
   frames: [],
   selectedFrameId: null,
   loading: true,
   notice: null,
   initialize: async () => {
     set({ loading: true });
-    const projects = await listProjects();
-    set({ projects, loading: false });
+    const [projects, shootingPreferences] = await Promise.all([
+      listProjects(),
+      getShootingPreferences(),
+    ]);
+    set({ projects, shootingPreferences, loading: false });
   },
   createFilm: async (name, orientation) => {
     const project = await createProject(name, orientation);
@@ -116,10 +132,14 @@ export const useStomoStore = create<StomoState>((set, get) => ({
   },
   openFilm: async (id) => {
     set({ loading: true });
-    const { project, frames } = await reloadFilm(id);
+    const [{ project, frames }, shootingPreferences] = await Promise.all([
+      reloadFilm(id),
+      getShootingPreferences(),
+    ]);
     set({
       project,
       frames,
+      shootingPreferences,
       selectedFrameId: frames.at(-1)?.id ?? null,
       loading: false,
     });
@@ -199,6 +219,14 @@ export const useStomoStore = create<StomoState>((set, get) => ({
     };
     await saveProject(project);
     set({ project });
+  },
+  updateShootingPreferences: async (patch) => {
+    const shootingPreferences = {
+      ...get().shootingPreferences,
+      ...patch,
+    };
+    set({ shootingPreferences });
+    await saveShootingPreferences(shootingPreferences);
   },
   chooseFrame: (selectedFrameId) => set({ selectedFrameId }),
   setNotice: (notice) => set({ notice }),

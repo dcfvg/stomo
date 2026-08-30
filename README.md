@@ -16,6 +16,12 @@ Ils sont enregistrés en Full HD, en paysage (1920 × 1080) ou en vertical
 (1080 × 1920). La touche lecture/pause d’un casque filaire ou Bluetooth peut
 servir de déclencheur après activation dans les réglages du film.
 
+Le titre, le sens et la vitesse appartiennent au film. La caméra, le
+retardateur, la grille, l’aperçu automatique et les images fantômes sont des
+habitudes communes : un changement s’applique aux films suivants sans modifier
+leur date. Lors de la première mise à jour, Stomo reprend ces habitudes depuis
+le film utilisé le plus récemment.
+
 Après chaque photo, Stomo confirme l’enregistrement puis rejoue une fois les
 quatre dernières images si cette aide est activée. La lecture complète tourne
 en boucle et commence par un carton noir portant le titre du film. Ce même
@@ -98,6 +104,8 @@ Le workflow `.github/workflows/pages.yml` vérifie le code, exécute les tests, 
 - ZIP : toutes les photos JPEG numérotées et `informations.txt` ;
 - WebM VP8 : film muet ;
 - `.stomo` v2 : archive versionnée contenant les images WebP originales, leurs
-  vignettes et les réglages. Les sauvegardes v1 restent importables.
+  vignettes et les réglages propres au film. Les préférences de prise de vue du
+  téléphone ne sont pas remplacées lors d’un import. Les sauvegardes v1 restent
+  importables.
 
 Les détails sur les projets ayant inspiré Stomo sont dans [ATTRIBUTIONS.md](./ATTRIBUTIONS.md).

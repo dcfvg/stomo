@@ -6,6 +6,7 @@ import {
   useRef,
 } from "react";
 import { MAX_PLAYBACK_CACHE } from "../config";
+import type { MediaRect } from "../lib/mediaRect";
 import type { FrameSummary } from "../types";
 
 interface PreparedImage {
@@ -24,6 +25,7 @@ export interface SmoothPlaybackHandle {
 
 interface SmoothPlaybackProps {
   loadImage?: (frameId: string) => Promise<Blob>;
+  frameRect?: MediaRect | null;
 }
 
 function waitUntilReady(image: HTMLImageElement, url: string) {
@@ -51,7 +53,10 @@ function waitUntilReady(image: HTMLImageElement, url: string) {
 export const SmoothPlayback = forwardRef<
   SmoothPlaybackHandle,
   SmoothPlaybackProps
->(function SmoothPlayback({ loadImage }: SmoothPlaybackProps, forwardedRef) {
+>(function SmoothPlayback(
+  { loadImage, frameRect }: SmoothPlaybackProps,
+  forwardedRef,
+) {
   const imageRefs = useRef<[HTMLImageElement | null, HTMLImageElement | null]>([
     null,
     null,
@@ -172,7 +177,13 @@ export const SmoothPlayback = forwardRef<
   useEffect(() => clear, [clear]);
 
   return (
-    <div className="smooth-playback" aria-live="off">
+    <div
+      className="smooth-playback"
+      aria-live="off"
+      style={
+        frameRect ? { ...frameRect, right: "auto", bottom: "auto" } : undefined
+      }
+    >
       {[0, 1].map((index) => (
         <img
           alt=""

@@ -70,4 +70,21 @@ describe("surface de lecture sans flash", () => {
       view.container.querySelector("img.is-active")?.getAttribute("src"),
     ).toBe("blob:frame-2");
   });
+
+  it("utilise exactement le cadre vertical calculé pour la caméra", () => {
+    const view = render(
+      <SmoothPlayback
+        frameRect={{ left: 18, top: 0, width: 324, height: 576 }}
+      />,
+    );
+
+    expect(view.container.querySelector(".smooth-playback")).toHaveStyle({
+      left: "18px",
+      top: "0px",
+      width: "324px",
+      height: "576px",
+      right: "auto",
+      bottom: "auto",
+    });
+  });
 });

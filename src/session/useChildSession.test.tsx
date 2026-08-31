@@ -320,6 +320,7 @@ describe("journal de session enfant", () => {
     await act(() => result.current.enterFullscreen());
 
     expect(requestFullscreen).toHaveBeenCalledOnce();
+    expect(requestFullscreen).toHaveBeenCalledWith({ navigationUI: "hide" });
     expect(result.current.fullscreenActive).toBe(true);
     expect(
       (await listSessionEvents()).some(

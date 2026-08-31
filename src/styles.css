@@ -16,6 +16,8 @@
   --shadow: 5px 5px 0 var(--ink);
   --app-height: 100vh;
   --viewport-top: 0px;
+  --system-ui-bottom: 0px;
+  --safe-bottom: max(env(safe-area-inset-bottom), var(--system-ui-bottom, 0px));
 }
 
 * {
@@ -50,6 +52,13 @@ body.studio-open {
   overflow: hidden;
   overscroll-behavior: none;
   background: #090b0d;
+}
+html:fullscreen,
+html:fullscreen body,
+html:fullscreen #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 button,
 input,
@@ -899,15 +908,6 @@ svg {
   visibility: visible;
   opacity: 1;
 }
-.camera-stage--portrait .smooth-playback__image {
-  right: auto;
-  left: 50%;
-  width: auto;
-  max-width: 100%;
-  aspect-ratio: 9 / 16;
-  transform: translateX(-50%) translateZ(0);
-  object-fit: cover;
-}
 .inspection-view {
   position: absolute;
   z-index: 7;
@@ -1026,7 +1026,7 @@ svg {
 .capture-feedback {
   position: absolute;
   z-index: 41;
-  bottom: 96px;
+  bottom: calc(96px + var(--safe-bottom));
   left: 50%;
   padding: 9px 14px;
   transform: translateX(-50%);
@@ -1060,7 +1060,7 @@ svg {
 }
 .compare-label {
   top: auto;
-  bottom: 96px;
+  bottom: calc(96px + var(--safe-bottom));
   min-width: 90px;
   background: var(--cyan);
   color: var(--ink);
@@ -1106,7 +1106,7 @@ svg {
 .capture-button {
   position: absolute;
   z-index: 13;
-  bottom: 13px;
+  bottom: calc(13px + var(--safe-bottom));
   left: max(12px, env(safe-area-inset-left));
   width: 72px;
   min-width: 72px;
@@ -1152,7 +1152,7 @@ svg {
 .playback-stop-button {
   position: absolute;
   z-index: 30;
-  bottom: max(12px, env(safe-area-inset-bottom));
+  bottom: calc(12px + var(--safe-bottom));
   left: 50%;
   width: 64px;
   height: 64px;
@@ -1173,7 +1173,7 @@ svg {
 .undo-button {
   position: absolute;
   z-index: 13;
-  bottom: 22px;
+  bottom: calc(22px + var(--safe-bottom));
   left: max(94px, calc(env(safe-area-inset-left) + 94px));
   width: 54px;
   height: 54px;
@@ -1197,7 +1197,7 @@ svg {
 .motion-aid-dots {
   position: absolute;
   z-index: 30;
-  bottom: 72px;
+  bottom: calc(72px + var(--safe-bottom));
   left: 50%;
   display: flex;
   gap: 6px;
@@ -1219,7 +1219,7 @@ svg {
 .motion-aid-skip {
   position: absolute;
   z-index: 30;
-  bottom: 12px;
+  bottom: calc(12px + var(--safe-bottom));
   left: 50%;
   width: 52px;
   height: 52px;
@@ -1264,7 +1264,7 @@ svg {
   position: absolute;
   z-index: 13;
   right: max(10px, env(safe-area-inset-right));
-  bottom: 13px;
+  bottom: calc(13px + var(--safe-bottom));
   width: 56px;
   min-height: 56px;
   display: grid;
@@ -1284,7 +1284,7 @@ svg {
   position: absolute;
   z-index: 15;
   right: 0;
-  bottom: 0;
+  bottom: var(--safe-bottom);
   left: 0;
   height: min(210px, 58%);
   display: grid;
@@ -2012,21 +2012,21 @@ svg {
     height: 64px;
     min-height: 64px;
     padding: 4px;
-    bottom: 8px;
+    bottom: calc(8px + var(--safe-bottom));
   }
   .playback-stop-button {
-    bottom: 8px;
+    bottom: calc(8px + var(--safe-bottom));
     width: 56px;
     height: 56px;
   }
   .capture-feedback {
-    bottom: 72px;
+    bottom: calc(72px + var(--safe-bottom));
   }
   .motion-aid-dots {
-    bottom: 64px;
+    bottom: calc(64px + var(--safe-bottom));
   }
   .motion-aid-skip {
-    bottom: 7px;
+    bottom: calc(7px + var(--safe-bottom));
     width: 48px;
     height: 48px;
   }
@@ -2035,14 +2035,14 @@ svg {
     height: 50px;
   }
   .undo-button {
-    bottom: 13px;
+    bottom: calc(13px + var(--safe-bottom));
     left: max(84px, calc(env(safe-area-inset-left) + 84px));
     width: 54px;
     height: 54px;
   }
   .timeline-toggle {
     min-height: 48px;
-    bottom: 8px;
+    bottom: calc(8px + var(--safe-bottom));
   }
   .exit-alert {
     top: 58px;

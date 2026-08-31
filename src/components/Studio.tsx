@@ -764,7 +764,11 @@ export function Studio({ sessionUi }: { sessionUi?: ReactNode }) {
               <i />
             </div>
           )}
-        <SmoothPlayback ref={playbackSurfaceRef} loadImage={getFrameImage} />
+        <SmoothPlayback
+          ref={playbackSurfaceRef}
+          loadImage={getFrameImage}
+          frameRect={cameraContentRect}
+        />
         {inspectionFrame && !playbackVisible && (
           <button
             className="inspection-view"

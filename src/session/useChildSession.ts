@@ -18,6 +18,12 @@ const HEARTBEAT_INTERVAL = 5_000;
 const FOCUS_LOSS_DELAY = 450;
 const FULLSCREEN_BLUR_GRACE = 900;
 
+function requestImmersiveFullscreen() {
+  return document.documentElement
+    .requestFullscreen?.({ navigationUI: "hide" })
+    .catch(() => undefined);
+}
+
 interface SessionMarker {
   sessionId: string;
   heartbeatAt: number;
@@ -294,9 +300,7 @@ export function useChildSession() {
     async (pin: string) => {
       if (!/^\d{4,6}$/.test(pin))
         throw new Error("Choisis un code de 4 à 6 chiffres.");
-      const fullscreen = document.documentElement
-        .requestFullscreen?.()
-        .catch(() => undefined);
+      const fullscreen = requestImmersiveFullscreen();
       const protectedPin = await createPinHash(pin);
       const now = Date.now();
       const next: ChildSessionRecord = {
@@ -327,7 +331,7 @@ export function useChildSession() {
   );
 
   const enterFullscreen = useCallback(async () => {
-    await document.documentElement.requestFullscreen?.().catch(() => undefined);
+    await requestImmersiveFullscreen();
     setFullscreenActive(Boolean(document.fullscreenElement));
   }, []);
 

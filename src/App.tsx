@@ -9,6 +9,7 @@ import { Studio } from "./components/Studio";
 import { useChildSession } from "./session/useChildSession";
 import { useStomoStore } from "./state/useStomoStore";
 import { cleanupStaleExportFiles } from "./media/exportSink";
+import { measureAppViewport } from "./lib/appViewport";
 
 export default function App() {
   const { project, loading, initialize } = useStomoStore();
@@ -58,20 +59,50 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let fullscreenHeight = 0;
+    let animationFrame = 0;
+    let settleTimer = 0;
     const updateAppHeight = () => {
-      const height = window.visualViewport?.height ?? window.innerHeight;
-      const top = window.visualViewport?.offsetTop ?? 0;
-      document.documentElement.style.setProperty("--app-height", `${height}px`);
-      document.documentElement.style.setProperty("--viewport-top", `${top}px`);
+      const measurement = measureAppViewport(
+        window,
+        document,
+        fullscreenHeight,
+      );
+      fullscreenHeight = measurement.fullscreenHeight;
+      document.documentElement.style.setProperty(
+        "--app-height",
+        `${measurement.height}px`,
+      );
+      document.documentElement.style.setProperty(
+        "--viewport-top",
+        `${measurement.topInset}px`,
+      );
+      document.documentElement.style.setProperty(
+        "--system-ui-bottom",
+        `${measurement.bottomInset}px`,
+      );
     };
-    updateAppHeight();
-    window.addEventListener("resize", updateAppHeight);
-    window.addEventListener("orientationchange", updateAppHeight);
-    window.visualViewport?.addEventListener("resize", updateAppHeight);
+    const scheduleUpdate = () => {
+      updateAppHeight();
+      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(settleTimer);
+      animationFrame = window.requestAnimationFrame(updateAppHeight);
+      settleTimer = window.setTimeout(updateAppHeight, 300);
+    };
+    scheduleUpdate();
+    window.addEventListener("resize", scheduleUpdate);
+    window.addEventListener("orientationchange", scheduleUpdate);
+    document.addEventListener("fullscreenchange", scheduleUpdate);
+    window.visualViewport?.addEventListener("resize", scheduleUpdate);
+    window.visualViewport?.addEventListener("scroll", scheduleUpdate);
     return () => {
-      window.removeEventListener("resize", updateAppHeight);
-      window.removeEventListener("orientationchange", updateAppHeight);
-      window.visualViewport?.removeEventListener("resize", updateAppHeight);
+      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(settleTimer);
+      window.removeEventListener("resize", scheduleUpdate);
+      window.removeEventListener("orientationchange", scheduleUpdate);
+      document.removeEventListener("fullscreenchange", scheduleUpdate);
+      window.visualViewport?.removeEventListener("resize", scheduleUpdate);
+      window.visualViewport?.removeEventListener("scroll", scheduleUpdate);
     };
   }, []);
 
